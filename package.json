@@ -1,0 +1,17 @@
+{
+  "name": "mcp-prompt-manager",
+  "version": "1.0.0",
+  "description": "MCP Prompt Manager Server",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "mcp-prompt-manager": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "zod": "^3.22.4"
+  }
+}
