@@ -1,61 +1,62 @@
-# MCP 프롬프트 관리자
+# MCP Prompt Manager
 
-MCP(Model Context Protocol) 프롬프트 관리자는 Claude와 같은 AI 모델이 로컬 프롬프트 파일에 접근할 수 있게 해주는 서버입니다. 프롬프트의 생성, 조회, 수정, 삭제 기능을 제공하여 자주 사용하는 프롬프트를 효율적으로 관리할 수 있습니다.
+MCP (Model Context Protocol) Prompt Manager is a server that enables AI models like Claude to access local prompt files. It provides functionality for creating, retrieving, updating, and deleting prompts, allowing efficient management of frequently used prompts.
 
-## 주요 기능
+## Key Features
 
-- 프롬프트 목록 조회
-- 특정 프롬프트 내용 조회
-- 새 프롬프트 생성
-- 프롬프트 내용 수정
-- 프롬프트 삭제
+- List all prompts
+- Retrieve specific prompt content
+- Create new prompts
+- Update prompt content
+- Delete prompts
 
-## 설치 방법
+## Installation
 
-### 필수 요구사항
-- Node.js v18 이상
+### Prerequisites
+
+- Node.js v18 or higher
 - npm
 
-### 설치 과정
+### Installation Steps
 
-1. 저장소 클론
+1. Clone the repository
    ```bash
    git clone https://github.com/Tae4an/mcp-prompt-manager.git
    cd mcp-prompt-manager
    ```
 
-2. 의존성 설치
+2. Install dependencies
    ```bash
    npm install
    ```
 
-3. 실행 권한 부여
+3. Grant execution permissions
    ```bash
    chmod +x server.js
    ```
 
-## Claude 데스크탑 연결 방법
+## Connecting to Claude Desktop
 
-1. Claude 데스크탑 설치 (아직 설치하지 않은 경우)
-   - [Claude 데스크탑 다운로드](https://claude.ai/desktop)
+1. Install Claude Desktop (if not already installed)
+   - [Download Claude Desktop](https://claude.ai/desktop)
 
-2. Claude 데스크탑 설정 파일 열기:
+2. Open Claude Desktop configuration file:
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-3. 설정 파일에 다음 내용 추가:
+3. Add the following content to the configuration file:
    ```json
    {
      "mcpServers": {
        "promptManager": {
          "command": "node",
-         "args": ["클론한_저장소의_절대경로/server.js"]
+         "args": ["absolute_path_to_cloned_repository/server.js"]
        }
      }
    }
    ```
    
-   예시:
+   Example:
    ```json
    {
      "mcpServers": {
@@ -67,84 +68,86 @@ MCP(Model Context Protocol) 프롬프트 관리자는 Claude와 같은 AI 모델
    }
    ```
 
-4. Claude 데스크탑 재시작
+4. Restart Claude Desktop
 
-## 사용 방법
+## Usage
 
-Claude 데스크탑에서 도구 아이콘(🛠️)을 클릭하여 다음 MCP 도구에 접근할 수 있습니다:
+In Claude Desktop, click the tools icon (🛠️) to access the following MCP tools:
 
 ### list-prompts
-모든 프롬프트 목록을 조회합니다.
-- 매개변수: 없음
+Retrieves a list of all prompts.
+- Parameters: None
 
 ### get-prompt
-특정 프롬프트의 내용을 조회합니다.
-- 매개변수: `filename` - 조회할 프롬프트 파일명
+Retrieves the content of a specific prompt.
+- Parameters: `filename` - Name of the prompt file to retrieve
 
 ### create-prompt
-새 프롬프트를 생성합니다.
-- 매개변수: 
-  - `filename` - 생성할 프롬프트 파일명 (예: my-prompt.txt)
-  - `content` - 프롬프트 내용
+Creates a new prompt.
+- Parameters: 
+  - `filename` - Name of the prompt file to create (e.g., my-prompt.txt)
+  - `content` - Prompt content
 
 ### update-prompt
-기존 프롬프트 내용을 수정합니다.
-- 매개변수:
-  - `filename` - 수정할 프롬프트 파일명
-  - `content` - 새 프롬프트 내용
+Updates the content of an existing prompt.
+- Parameters:
+  - `filename` - Name of the prompt file to update
+  - `content` - New prompt content
 
 ### delete-prompt
-프롬프트를 삭제합니다.
-- 매개변수: `filename` - 삭제할 프롬프트 파일명
+Deletes a prompt.
+- Parameters: `filename` - Name of the prompt file to delete
 
-## 고급 설정
+## Advanced Configuration
 
-### 프롬프트 저장 경로 변경
-기본적으로 프롬프트는 서버 파일이 있는 디렉토리의 `prompts` 폴더에 저장됩니다. 환경 변수를 사용하여 경로를 변경할 수 있습니다:
+### Changing Prompt Storage Path
+
+By default, prompts are stored in the `prompts` folder in the directory where the server file is located. You can change the path using environment variables:
 
 ```bash
-PROMPTS_DIR=/원하는/경로 node server.js
+PROMPTS_DIR=/desired/path node server.js
 ```
 
-또는 claude_desktop_config.json에서 환경 변수 설정:
+Or set environment variables in claude_desktop_config.json:
+
 ```json
 {
   "mcpServers": {
     "promptManager": {
       "command": "node",
-      "args": ["/절대경로/mcp-prompt-manager/server.js"],
+      "args": ["/absolute/path/mcp-prompt-manager/server.js"],
       "env": {
-        "PROMPTS_DIR": "/원하는/경로"
+        "PROMPTS_DIR": "/desired/path"
       }
     }
   }
 }
 ```
 
-## 예시
+## Examples
 
-1. 새 프롬프트 생성:
-   - 도구: `create-prompt`
-   - 파일명: `greeting.txt`
-   - 내용: `당신은 친절하고 도움이 되는 AI 비서입니다. 사용자의 질문에 정중하게 답변해 주세요.`
+1. Creating a new prompt:
+   - Tool: `create-prompt`
+   - Filename: `greeting.txt`
+   - Content: `You are a friendly and helpful AI assistant. Please respond politely to user questions.`
 
-2. 프롬프트 목록 조회:
-   - 도구: `list-prompts`
+2. Listing prompts:
+   - Tool: `list-prompts`
 
-3. 프롬프트 내용 조회:
-   - 도구: `get-prompt`
-   - 파일명: `greeting.txt`
+3. Retrieving prompt content:
+   - Tool: `get-prompt`
+   - Filename: `greeting.txt`
 
-## 문제 해결
+## Troubleshooting
 
-### MCP 서버가 연결되지 않는 경우
-- 서버 파일 경로가 정확한지 확인하세요
-- 서버 실행 권한이 있는지 확인하세요
-- Node.js 버전이 v16 이상인지 확인하세요
+### If the MCP server doesn't connect
+- Verify that the server file path is correct
+- Check that the server has execution permissions
+- Ensure Node.js version is v18 or higher
 
-### 도구가 표시되지 않는 경우
-- Claude 데스크탑을 재시작해보세요
-- `claude_desktop_config.json` 파일이 올바르게 설정되었는지 확인하세요
+### If tools don't appear
+- Try restarting Claude Desktop
+- Verify that the `claude_desktop_config.json` file is configured correctly
 
-### 파일 접근 권한 문제
-- 프롬프트 디렉토리에 읽기/쓰기 권한이 있는지 확인하세요
+### File access permission issues
+- Ensure you have read/write permissions for the prompts directory
