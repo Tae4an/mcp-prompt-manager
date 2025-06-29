@@ -1,5 +1,9 @@
 # MCP Prompt Manager
 
+**Certified by MCP Review**
+
+This project is officially certified by [MCP Review](https://mcpreview.com/mcp-servers/tae4an/mcp-prompt-manager).
+
 MCP (Model Context Protocol) Prompt Manager is a server that enables AI models like Claude to access local prompt files. It provides functionality for creating, retrieving, updating, and deleting prompts, allowing efficient management of frequently used prompts.
 
 ## Key Features
