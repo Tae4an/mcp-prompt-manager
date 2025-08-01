@@ -8,11 +8,19 @@ MCP (Model Context Protocol) Prompt Manager is a server that enables AI models l
 
 ## Key Features
 
+### Core Features
 - List all prompts
 - Retrieve specific prompt content
 - Create new prompts
 - Update prompt content
 - Delete prompts
+
+### Advanced Features
+- **Search Functionality**: Search prompts by filename or content
+- **Category & Tag System**: Organize prompts with categories and tags
+- **Template Processing**: Use variable substitution with `{{variable}}` syntax
+- **Favorites Management**: Mark frequently used prompts as favorites
+- **Metadata Management**: Automatic metadata tracking for enhanced organization
 
 ## Installation
 
@@ -78,6 +86,8 @@ MCP (Model Context Protocol) Prompt Manager is a server that enables AI models l
 
 In Claude Desktop, click the tools icon (🛠️) to access the following MCP tools:
 
+## Core Tools
+
 ### list-prompts
 Retrieves a list of all prompts.
 - Parameters: None
@@ -99,8 +109,55 @@ Updates the content of an existing prompt.
   - `content` - New prompt content
 
 ### delete-prompt
-Deletes a prompt.
+Deletes a prompt (automatically removes associated metadata).
 - Parameters: `filename` - Name of the prompt file to delete
+
+## Advanced Tools
+
+### search-prompts
+Search prompts by filename or content.
+- Parameters:
+  - `query` - Search query string
+  - `searchInContent` - (Optional) Boolean to search within prompt content (default: false)
+
+### tag-prompt
+Add tags to a prompt for better organization.
+- Parameters:
+  - `filename` - Name of the prompt file to tag
+  - `tags` - Array of tag strings
+
+### categorize-prompt
+Set a category for a prompt.
+- Parameters:
+  - `filename` - Name of the prompt file to categorize
+  - `category` - Category name string
+
+### list-by-category
+List prompts organized by category.
+- Parameters:
+  - `category` - (Optional) Specific category to filter by
+
+### process-template
+Process a prompt template with variable substitution.
+- Parameters:
+  - `filename` - Name of the template prompt file
+  - `variables` - Object with variable names as keys and replacement values as values
+- Note: Use `{{variable}}` format in templates
+
+### list-template-variables
+List all variables found in a template prompt.
+- Parameters:
+  - `filename` - Name of the template prompt file to analyze
+
+### favorite-prompt
+Add or remove a prompt from favorites.
+- Parameters:
+  - `filename` - Name of the prompt file
+  - `action` - Either "add" or "remove"
+
+### list-favorites
+List all favorite prompts with detailed information.
+- Parameters: None
 
 ## Advanced Configuration
 
@@ -130,17 +187,50 @@ Or set environment variables in claude_desktop_config.json:
 
 ## Examples
 
-1. Creating a new prompt:
+### Basic Usage
+
+1. **Creating a new prompt**:
    - Tool: `create-prompt`
    - Filename: `greeting.txt`
    - Content: `You are a friendly and helpful AI assistant. Please respond politely to user questions.`
 
-2. Listing prompts:
+2. **Listing prompts**:
    - Tool: `list-prompts`
 
-3. Retrieving prompt content:
+3. **Retrieving prompt content**:
    - Tool: `get-prompt`
    - Filename: `greeting.txt`
+
+### Advanced Usage
+
+4. **Creating a template prompt**:
+   - Tool: `create-prompt`
+   - Filename: `email-template.txt`
+   - Content: `Dear {{name}}, Thank you for your interest in {{product}}. Best regards, {{sender}}`
+
+5. **Processing a template**:
+   - Tool: `process-template`
+   - Filename: `email-template.txt`
+   - Variables: `{"name": "John", "product": "MCP Server", "sender": "Support Team"}`
+
+6. **Organizing prompts**:
+   - Tool: `categorize-prompt`
+   - Filename: `greeting.txt`
+   - Category: `customer-service`
+   
+   - Tool: `tag-prompt`
+   - Filename: `greeting.txt`
+   - Tags: `["polite", "professional", "greeting"]`
+
+7. **Searching prompts**:
+   - Tool: `search-prompts`
+   - Query: `assistant`
+   - SearchInContent: `true`
+
+8. **Managing favorites**:
+   - Tool: `favorite-prompt`
+   - Filename: `greeting.txt`
+   - Action: `add`
 
 ## Troubleshooting
 
