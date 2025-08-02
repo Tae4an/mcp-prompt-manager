@@ -298,3 +298,15 @@ Or set environment variables in claude_desktop_config.json:
 
 ### File access permission issues
 - Ensure you have read/write permissions for the prompts directory
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Support
+
+If you encounter any issues or have questions, please open an issue on the [GitHub repository](https://github.com/Tae4an/mcp-prompt-manager/issues).

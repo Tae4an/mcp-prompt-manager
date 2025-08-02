@@ -10,6 +10,24 @@
   "scripts": {
     "start": "node server.js"
   },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "prompt-management",
+    "ai-tools",
+    "claude",
+    "version-control"
+  ],
+  "author": "Tae4an",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tae4an/mcp-prompt-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Tae4an/mcp-prompt-manager/issues"
+  },
+  "homepage": "https://github.com/Tae4an/mcp-prompt-manager#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
     "zod": "^3.22.4",
