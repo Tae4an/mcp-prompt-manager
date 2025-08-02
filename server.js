@@ -5,6 +5,35 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import { VersionManager } from "./utils/version-manager.js";
+import {
+  validateFilename,
+  validateContent,
+  validateTags,
+  validateCategory,
+  validateSearchQuery,
+  validateVersionNumber,
+  validateTemplateVariables,
+  sanitizeInput,
+  validatePathSafety,
+  createValidationError
+} from "./utils/validation.js";
+import {
+  PromptError,
+  ValidationError,
+  FileNotFoundError,
+  FileAlreadyExistsError,
+  PermissionError,
+  StorageError,
+  VersionError,
+  classifyError,
+  safeFileOperation,
+  createErrorResponse,
+  createSuccessResponse,
+  retryOperation,
+  logError,
+  globalErrorTracker
+} from "./utils/error-handler.js";
+import { log, defaultLogger } from "./utils/logger.js";
 
 // ESM에서 __dirname 구하기
 const __filename = fileURLToPath(import.meta.url);
@@ -102,24 +131,68 @@ server.tool(
   },
   async ({ filename, content }) => {
     try {
-      const filePath = path.join(PROMPTS_DIR, filename);
-      
-      // 파일 존재 여부 확인
-      try {
-        await fs.access(filePath);
-        return createErrorResponse(`A prompt with filename "${filename}" already exists. Use update-prompt to modify it.`);
-      } catch (e) {
-        // 파일이 없으면 계속 진행
+      // 입력 검증
+      const filenameValidation = validateFilename(filename);
+      if (!filenameValidation.isValid) {
+        throw new ValidationError(filenameValidation.error, 'filename');
       }
+
+      const contentValidation = validateContent(content);
+      if (!contentValidation.isValid) {
+        throw new ValidationError(contentValidation.error, 'content');
+      }
+
+      // 경로 안전성 검증
+      if (!validatePathSafety(filename)) {
+        throw new ValidationError(`Unsafe path detected: ${filename}`, 'filename');
+      }
+
+      // 입력 정제
+      const sanitizedFilename = sanitizeInput(filename);
+      const sanitizedContent = sanitizeInput(content);
       
-      await fs.writeFile(filePath, content, "utf-8");
+      const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
       
-      // 버전 히스토리에 저장
-      const version = await versionManager.saveVersion(filename, content, "create");
+      // 작업 시작 로깅
+      const timer = log.time(`create-prompt-${sanitizedFilename}`);
+      log.info('Creating new prompt', { 
+        filename: sanitizedFilename, 
+        contentLength: sanitizedContent.length 
+      });
+
+      // 파일 작업을 안전하게 실행
+      const result = await safeFileOperation(async () => {
+        // 파일 존재 여부 확인
+        try {
+          await fs.access(filePath);
+          throw new FileAlreadyExistsError(sanitizedFilename);
+        } catch (e) {
+          if (e instanceof FileAlreadyExistsError) throw e;
+          // 파일이 없으면 계속 진행
+        }
+        
+        // 재시도 가능한 파일 쓰기 작업
+        await retryOperation(async () => {
+          await fs.writeFile(filePath, sanitizedContent, "utf-8");
+        });
+        
+        // 버전 히스토리에 저장
+        const version = await versionManager.saveVersion(sanitizedFilename, sanitizedContent, "create");
+        
+        log.info('Prompt created successfully', {
+          filename: sanitizedFilename,
+          version: version.version,
+          size: sanitizedContent.length
+        });
+        
+        return `Successfully created prompt: ${sanitizedFilename} (Version ${version.version})`;
+      }, `Creating prompt: ${sanitizedFilename}`);
       
-      return createSuccessResponse(`Successfully created prompt: ${filename} (Version ${version.version})`);
+      await timer.end({ operation: 'create-prompt', filename: sanitizedFilename });
+      
+      return toMcpSuccessResponse(result);
     } catch (error) {
-      return createErrorResponse(`Failed to create prompt ${filename}: ${error.message}`, error);
+      return toMcpErrorResponse(error);
     }
   }
 );
@@ -134,21 +207,41 @@ server.tool(
   },
   async ({ filename, content }) => {
     try {
-      const filePath = path.join(PROMPTS_DIR, filename);
+      // 입력 검증
+      const filenameValidation = validateFilename(filename);
+      if (!filenameValidation.isValid) {
+        return createErrorResponse(`Invalid filename: ${filenameValidation.error}`);
+      }
+
+      const contentValidation = validateContent(content);
+      if (!contentValidation.isValid) {
+        return createErrorResponse(`Invalid content: ${contentValidation.error}`);
+      }
+
+      // 경로 안전성 검증
+      if (!validatePathSafety(filename)) {
+        return createErrorResponse(`Unsafe path detected: ${filename}`);
+      }
+
+      // 입력 정제
+      const sanitizedFilename = sanitizeInput(filename);
+      const sanitizedContent = sanitizeInput(content);
+      
+      const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
       
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
       } catch (e) {
-        return createErrorResponse(`Prompt "${filename}" does not exist. Use create-prompt to create it.`);
+        return createErrorResponse(`Prompt "${sanitizedFilename}" does not exist. Use create-prompt to create it.`);
       }
       
-      await fs.writeFile(filePath, content, "utf-8");
+      await fs.writeFile(filePath, sanitizedContent, "utf-8");
       
       // 버전 히스토리에 저장
-      const version = await versionManager.saveVersion(filename, content, "update");
+      const version = await versionManager.saveVersion(sanitizedFilename, sanitizedContent, "update");
       
-      return createSuccessResponse(`Successfully updated prompt: ${filename} (Version ${version.version})`);
+      return createSuccessResponse(`Successfully updated prompt: ${sanitizedFilename} (Version ${version.version})`);
     } catch (error) {
       return createErrorResponse(`Failed to update prompt ${filename}: ${error.message}`, error);
     }
@@ -820,28 +913,40 @@ server.tool(
   }
 );
 
-// 유틸리티 함수: 에러 응답 생성
-function createErrorResponse(message, error = null) {
-  if (error) {
-    console.error(message, error);
-  }
+// MCP 응답 형식으로 변환하는 함수들
+function toMcpErrorResponse(error) {
+  const errorResponse = createErrorResponse(error, process.env.NODE_ENV === 'development');
+  globalErrorTracker.track(error);
+  
+  // 구조화된 로깅
+  log.error('MCP operation failed', {
+    errorName: error.name,
+    errorCode: error.code,
+    message: error.message,
+    filename: error.filename,
+    field: error.field,
+    context: error.context
+  });
+  
   return {
     content: [
       {
         type: "text",
-        text: message
+        text: errorResponse.error.message
       }
     ]
   };
 }
 
-// 유틸리티 함수: 성공 응답 생성
-function createSuccessResponse(message) {
+function toMcpSuccessResponse(data, message) {
+  const successResponse = createSuccessResponse(data, message);
+  const text = message || (typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+  
   return {
     content: [
       {
         type: "text",
-        text: message
+        text: text
       }
     ]
   };
@@ -866,19 +971,53 @@ function formatDate(date) {
 // 메인 함수
 async function main() {
   try {
+    log.info('Starting MCP Prompt Manager Server', {
+      version: '1.0.0',
+      promptsDir: PROMPTS_DIR,
+      nodeVersion: process.version,
+      pid: process.pid
+    });
+
     await ensurePromptsDir();
     
     const transport = new StdioServerTransport();
     await server.connect(transport);
+    
+    log.info('MCP Server connected successfully', {
+      transport: 'stdio',
+      capabilities: Object.keys(server.capabilities || {})
+    });
+    
     console.error("Prompt Manager MCP Server running on stdio");
   } catch (error) {
+    log.error('Fatal error during server startup', {
+      error: error.message,
+      stack: error.stack
+    });
     console.error("Fatal error in main():", error);
     process.exit(1);
   }
 }
 
+// 프로세스 종료 시 정리
+process.on('SIGINT', async () => {
+  log.info('Received SIGINT, shutting down gracefully');
+  const stats = globalErrorTracker.getStats();
+  log.info('Server shutdown stats', stats);
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  log.info('Received SIGTERM, shutting down gracefully');
+  process.exit(0);
+});
+
 // 서버 실행
 main().catch((error) => {
+  log.error('Unhandled exception in main', {
+    error: error.message,
+    stack: error.stack
+  });
   console.error("Unhandled exception:", error);
   process.exit(1);
 });
