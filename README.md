@@ -21,6 +21,7 @@ MCP (Model Context Protocol) Prompt Manager is a server that enables AI models l
 - **Template Processing**: Use variable substitution with `{{variable}}` syntax
 - **Favorites Management**: Mark frequently used prompts as favorites
 - **Metadata Management**: Automatic metadata tracking for enhanced organization
+- **Version Management**: Complete version control with history tracking, diff comparison, and rollback capabilities
 
 ## Installation
 
@@ -159,6 +160,37 @@ Add or remove a prompt from favorites.
 List all favorite prompts with detailed information.
 - Parameters: None
 
+## Version Management Tools
+
+### list-prompt-versions
+List all versions of a specific prompt with timestamps and actions.
+- Parameters:
+  - `filename` - Name of the prompt file to get version history for
+
+### compare-prompt-versions
+Compare two versions of a prompt and show detailed differences.
+- Parameters:
+  - `filename` - Name of the prompt file to compare
+  - `fromVersion` - Source version number to compare from
+  - `toVersion` - Target version number to compare to
+
+### rollback-prompt
+Rollback a prompt to a specific previous version.
+- Parameters:
+  - `filename` - Name of the prompt file to rollback
+  - `version` - Version number to rollback to
+
+### get-prompt-version
+Get the content of a specific version of a prompt.
+- Parameters:
+  - `filename` - Name of the prompt file
+  - `version` - Version number to retrieve
+
+### get-prompt-version-stats
+Get statistics about a prompt's version history including total versions, actions breakdown, and size history.
+- Parameters:
+  - `filename` - Name of the prompt file to get statistics for
+
 ## Advanced Configuration
 
 ### Changing Prompt Storage Path
@@ -231,6 +263,27 @@ Or set environment variables in claude_desktop_config.json:
    - Tool: `favorite-prompt`
    - Filename: `greeting.txt`
    - Action: `add`
+
+### Version Management Usage
+
+9. **Viewing version history**:
+   - Tool: `list-prompt-versions`
+   - Filename: `greeting.txt`
+
+10. **Comparing versions**:
+    - Tool: `compare-prompt-versions`
+    - Filename: `greeting.txt`
+    - FromVersion: `1`
+    - ToVersion: `3`
+
+11. **Rolling back to a previous version**:
+    - Tool: `rollback-prompt`
+    - Filename: `greeting.txt`
+    - Version: `2`
+
+12. **Getting version statistics**:
+    - Tool: `get-prompt-version-stats`
+    - Filename: `greeting.txt`
 
 ## Troubleshooting
 

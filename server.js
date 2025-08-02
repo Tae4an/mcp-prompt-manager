@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { fileURLToPath } from "url";
+import { VersionManager } from "./utils/version-manager.js";
 
 // ESM에서 __dirname 구하기
 const __filename = fileURLToPath(import.meta.url);
@@ -11,6 +12,9 @@ const __dirname = path.dirname(__filename);
 
 // 프롬프트 디렉토리 설정
 const PROMPTS_DIR = process.env.PROMPTS_DIR || path.join(__dirname, "prompts");
+
+// 버전 관리자 인스턴스 생성
+const versionManager = new VersionManager(PROMPTS_DIR);
 
 // 서버 인스턴스 생성
 const server = new McpServer({
@@ -110,7 +114,10 @@ server.tool(
       
       await fs.writeFile(filePath, content, "utf-8");
       
-      return createSuccessResponse(`Successfully created prompt: ${filename}`);
+      // 버전 히스토리에 저장
+      const version = await versionManager.saveVersion(filename, content, "create");
+      
+      return createSuccessResponse(`Successfully created prompt: ${filename} (Version ${version.version})`);
     } catch (error) {
       return createErrorResponse(`Failed to create prompt ${filename}: ${error.message}`, error);
     }
@@ -138,7 +145,10 @@ server.tool(
       
       await fs.writeFile(filePath, content, "utf-8");
       
-      return createSuccessResponse(`Successfully updated prompt: ${filename}`);
+      // 버전 히스토리에 저장
+      const version = await versionManager.saveVersion(filename, content, "update");
+      
+      return createSuccessResponse(`Successfully updated prompt: ${filename} (Version ${version.version})`);
     } catch (error) {
       return createErrorResponse(`Failed to update prompt ${filename}: ${error.message}`, error);
     }
@@ -174,6 +184,9 @@ server.tool(
       } catch (e) {
         // 메타데이터 파일이 없으면 무시
       }
+      
+      // 버전 히스토리도 삭제
+      await versionManager.deleteVersionHistory(filename);
       
       return createSuccessResponse(`Successfully deleted prompt: ${filename}`);
     } catch (error) {
@@ -596,6 +609,213 @@ server.tool(
       return createSuccessResponse(result.trim());
     } catch (error) {
       return createErrorResponse(`Failed to list favorite prompts: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 버전 히스토리 조회 도구 등록
+server.tool(
+  "list-prompt-versions",
+  "List all versions of a specific prompt",
+  {
+    filename: z.string().describe("The filename of the prompt to get version history for")
+  },
+  async ({ filename }) => {
+    try {
+      const filePath = path.join(PROMPTS_DIR, filename);
+      
+      // 파일 존재 여부 확인
+      try {
+        await fs.access(filePath);
+      } catch (e) {
+        return createErrorResponse(`Prompt "${filename}" does not exist.`);
+      }
+
+      const versions = await versionManager.getAllVersions(filename);
+      
+      if (versions.length === 0) {
+        return createSuccessResponse(`No version history found for "${filename}". This prompt may have been created before version tracking was enabled.`);
+      }
+
+      let result = `Version history for "${filename}" (${versions.length} versions):\n\n`;
+      
+      versions.forEach((version, index) => {
+        result += `Version ${version.version} (${version.action})\n`;
+        result += `  Date: ${formatDate(new Date(version.timestamp))}\n`;
+        result += `  Size: ${formatFileSize(version.size)}\n`;
+        result += `  Checksum: ${version.checksum}\n`;
+        if (index < versions.length - 1) result += "\n";
+      });
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`Failed to get version history for ${filename}: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 버전 비교 도구 등록
+server.tool(
+  "compare-prompt-versions",
+  "Compare two versions of a prompt and show differences",
+  {
+    filename: z.string().describe("The filename of the prompt to compare"),
+    fromVersion: z.number().describe("The source version number to compare from"),
+    toVersion: z.number().describe("The target version number to compare to")
+  },
+  async ({ filename, fromVersion, toVersion }) => {
+    try {
+      const filePath = path.join(PROMPTS_DIR, filename);
+      
+      // 파일 존재 여부 확인
+      try {
+        await fs.access(filePath);
+      } catch (e) {
+        return createErrorResponse(`Prompt "${filename}" does not exist.`);
+      }
+
+      const comparison = await versionManager.compareVersions(filename, fromVersion, toVersion);
+      
+      let result = `Comparison: ${filename} v${fromVersion} → v${toVersion}\n\n`;
+      result += `Summary:\n`;
+      result += `  Lines added: ${comparison.summary.linesAdded}\n`;
+      result += `  Lines removed: ${comparison.summary.linesRemoved}\n`;
+      result += `  Lines changed: ${comparison.summary.linesChanged}\n`;
+      result += `  Total lines (from): ${comparison.summary.totalOldLines}\n`;
+      result += `  Total lines (to): ${comparison.summary.totalNewLines}\n\n`;
+      result += `Detailed diff:\n`;
+      result += "```diff\n";
+      result += comparison.diff;
+      result += "```";
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`Failed to compare versions for ${filename}: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 버전 롤백 도구 등록
+server.tool(
+  "rollback-prompt",
+  "Rollback a prompt to a specific version",
+  {
+    filename: z.string().describe("The filename of the prompt to rollback"),
+    version: z.number().describe("The version number to rollback to")
+  },
+  async ({ filename, version }) => {
+    try {
+      const filePath = path.join(PROMPTS_DIR, filename);
+      
+      // 파일 존재 여부 확인
+      try {
+        await fs.access(filePath);
+      } catch (e) {
+        return createErrorResponse(`Prompt "${filename}" does not exist.`);
+      }
+
+      const rollbackResult = await versionManager.rollbackToVersion(filename, version);
+      
+      let result = `Successfully rolled back "${filename}" to version ${rollbackResult.rolledBackTo}\n`;
+      result += `New version: ${rollbackResult.newVersion}\n\n`;
+      result += `Content preview (first 200 characters):\n`;
+      result += rollbackResult.content.substring(0, 200);
+      if (rollbackResult.content.length > 200) {
+        result += "...";
+      }
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`Failed to rollback ${filename}: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 특정 버전 조회 도구 등록
+server.tool(
+  "get-prompt-version",
+  "Get the content of a specific version of a prompt",
+  {
+    filename: z.string().describe("The filename of the prompt"),
+    version: z.number().describe("The version number to retrieve")
+  },
+  async ({ filename, version }) => {
+    try {
+      const filePath = path.join(PROMPTS_DIR, filename);
+      
+      // 파일 존재 여부 확인
+      try {
+        await fs.access(filePath);
+      } catch (e) {
+        return createErrorResponse(`Prompt "${filename}" does not exist.`);
+      }
+
+      const versionData = await versionManager.getVersion(filename, version);
+      
+      if (!versionData) {
+        return createErrorResponse(`Version ${version} not found for prompt "${filename}".`);
+      }
+
+      let result = `Prompt: ${filename} (Version ${version})\n`;
+      result += `Action: ${versionData.action}\n`;
+      result += `Date: ${formatDate(new Date(versionData.timestamp))}\n`;
+      result += `Size: ${formatFileSize(versionData.size)}\n`;
+      result += `Checksum: ${versionData.checksum}\n\n`;
+      result += `Content:\n${versionData.content}`;
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`Failed to get version ${version} of ${filename}: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 버전 통계 도구 등록
+server.tool(
+  "get-prompt-version-stats",
+  "Get statistics about a prompt's version history",
+  {
+    filename: z.string().describe("The filename of the prompt to get statistics for")
+  },
+  async ({ filename }) => {
+    try {
+      const filePath = path.join(PROMPTS_DIR, filename);
+      
+      // 파일 존재 여부 확인
+      try {
+        await fs.access(filePath);
+      } catch (e) {
+        return createErrorResponse(`Prompt "${filename}" does not exist.`);
+      }
+
+      const stats = await versionManager.getVersionStats(filename);
+      
+      if (stats.totalVersions === 0) {
+        return createSuccessResponse(`No version history found for "${filename}".`);
+      }
+
+      let result = `Version statistics for "${filename}":\n\n`;
+      result += `Total versions: ${stats.totalVersions}\n`;
+      result += `First version: ${formatDate(new Date(stats.firstVersion.timestamp))} (${stats.firstVersion.action})\n`;
+      result += `Latest version: ${formatDate(new Date(stats.lastVersion.timestamp))} (${stats.lastVersion.action})\n\n`;
+      
+      result += `Actions breakdown:\n`;
+      Object.entries(stats.actions).forEach(([action, count]) => {
+        result += `  ${action}: ${count}\n`;
+      });
+      
+      result += `\nSize history:\n`;
+      stats.totalSizeHistory.slice(-5).forEach((entry) => {
+        result += `  v${entry.version}: ${formatFileSize(entry.size)} (${formatDate(new Date(entry.timestamp))})\n`;
+      });
+      
+      if (stats.totalSizeHistory.length > 5) {
+        result += `  ... and ${stats.totalSizeHistory.length - 5} more versions`;
+      }
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`Failed to get version statistics for ${filename}: ${error.message}`, error);
     }
   }
 );
