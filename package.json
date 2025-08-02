@@ -8,7 +8,10 @@
     "mcp-prompt-manager": "./server.js"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "keywords": [
     "mcp",
@@ -30,7 +33,15 @@
   "homepage": "https://github.com/Tae4an/mcp-prompt-manager#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
-    "zod": "^3.22.4",
-    "diff": "^5.1.0"
+    "diff": "^5.1.0",
+    "sanitize-filename": "^1.6.3",
+    "validator": "^13.15.15",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "babel-jest": "^30.0.5",
+    "jest": "^30.0.5"
   }
 }
