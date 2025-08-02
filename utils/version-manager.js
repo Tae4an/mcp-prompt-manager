@@ -54,7 +54,7 @@ export class VersionManager {
 
   async getVersion(filename, versionNumber) {
     const history = await this.loadVersionHistory(filename);
-    return history.find(v => v.version === versionNumber);
+    return history.find(v => v.version === versionNumber) || null;
   }
 
   async getAllVersions(filename) {
@@ -86,12 +86,11 @@ export class VersionManager {
       { context: 3 }
     );
 
-    return {
-      fromVersion: fromVersion,
-      toVersion: toVersion,
-      diff: patch,
-      summary: this.generateDiffSummary(fromVer.content, toVer.content)
-    };
+    return patch;
+  }
+
+  async rollback(filename, targetVersion) {
+    return await this.rollbackToVersion(filename, targetVersion);
   }
 
   async rollbackToVersion(filename, targetVersion) {
@@ -196,7 +195,7 @@ export class VersionManager {
       totalVersions: history.length,
       firstVersion: history[0],
       lastVersion: history[history.length - 1],
-      totalSizeHistory: sizeHistory,
+      sizeHistory: sizeHistory,
       actions: history.reduce((acc, v) => {
         acc[v.action] = (acc[v.action] || 0) + 1;
         return acc;
