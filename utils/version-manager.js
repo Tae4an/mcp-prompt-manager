@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as crypto from "crypto";
 import { createTwoFilesPatch } from "diff";
 
 export class VersionManager {
@@ -131,14 +132,8 @@ export class VersionManager {
   }
 
   calculateChecksum(content) {
-    // 간단한 해시 생성 (실제 프로덕션에서는 crypto 모듈 사용 권장)
-    let hash = 0;
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // 32비트 정수로 변환
-    }
-    return hash.toString(16);
+    // SHA-256 해시 생성으로 보안 강화
+    return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
   }
 
   generateDiffSummary(oldContent, newContent) {
