@@ -1,5 +1,10 @@
 # MCP Prompt Manager
 
+## Other Languages
+- [한국어](README-ko.md)
+- [日本語](README-ja.md)  
+- [中文](README-zh.md)
+
 **Certified by MCP Review**
 
 This project is officially certified by [MCP Review](https://mcpreview.com/mcp-servers/tae4an/mcp-prompt-manager).
@@ -488,3 +493,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Support
 
 If you encounter any issues or have questions, please open an issue on the [GitHub repository](https://github.com/Tae4an/mcp-prompt-manager/issues).
+
+
