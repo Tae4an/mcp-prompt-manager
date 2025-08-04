@@ -72,8 +72,14 @@ export class InputSanitizer {
 
     // HTML 태그 제거 (허용되지 않는 경우)
     if (!allowHTML) {
-      sanitized = validator.stripLow(sanitized, true);
       sanitized = sanitized.replace(/<[^>]*>/g, '');
+      // 위험한 패턴들 제거
+      this.dangerousPatterns.forEach(pattern => {
+        if (pattern.test(sanitized)) {
+          sanitized = sanitized.replace(pattern, '');
+        }
+      });
+      sanitized = validator.stripLow(sanitized, true);
     }
 
     // 개행 문자 처리
@@ -81,22 +87,17 @@ export class InputSanitizer {
       sanitized = sanitized.replace(/[\r\n]/g, ' ');
     }
 
-    // 공백 정리
+    // 공백 정리 (개행문자 보존 모드가 아닐 때만)
     if (trimWhitespace) {
-      sanitized = sanitized.trim();
-      sanitized = sanitized.replace(/\s+/g, ' ');
-    }
-
-    // 위험한 패턴 검사 및 제거
-    this.dangerousPatterns.forEach(pattern => {
-      if (pattern.test(sanitized)) {
-        log.warn('Dangerous pattern detected and removed', {
-          pattern: pattern.toString(),
-          input: input.substring(0, 100) + '...'
-        });
-        sanitized = sanitized.replace(pattern, '');
+      if (!allowNewlines) {
+        sanitized = sanitized.trim();
+        sanitized = sanitized.replace(/\s+/g, ' ');
+      } else {
+        // 개행 문자는 보존하되 다른 공백 정리
+        sanitized = sanitized.trim();
+        sanitized = sanitized.replace(/[ \t]+/g, ' ');
       }
-    });
+    }
 
     return sanitized;
   }
@@ -195,12 +196,8 @@ export class InputSanitizer {
         return null;
       }
 
-      // 유효성 검증
-      if (!validator.isURL(url, {
-        protocols: allowedProtocols,
-        require_protocol: true,
-        require_valid_protocol: true
-      })) {
+      // 기본적인 URL 검증만 수행
+      if (!url.match(/^https?:\/\/.+/)) {
         return null;
       }
 
