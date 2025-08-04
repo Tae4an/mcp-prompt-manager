@@ -16,12 +16,17 @@ MCP (Model Context Protocol) Prompt Manager is a server that enables AI models l
 - Delete prompts
 
 ### Advanced Features
-- **Search Functionality**: Search prompts by filename or content
+- **Intelligent Search**: Advanced fuzzy search with multiple algorithms (Levenshtein, Jaro-Winkler, n-gram similarity)
 - **Category & Tag System**: Organize prompts with categories and tags
-- **Template Processing**: Use variable substitution with `{{variable}}` syntax
+- **Template Processing**: Use variable substitution with `{{variable}}` syntax and advanced conditionals
+- **Template Library**: Built-in template library with 12 professional templates across 5 categories
 - **Favorites Management**: Mark frequently used prompts as favorites
 - **Metadata Management**: Automatic metadata tracking for enhanced organization
 - **Version Management**: Complete version control with history tracking, diff comparison, and rollback capabilities
+- **Import/Export System**: Backup and restore prompts with JSON format, including metadata and version history
+- **Security & Validation**: Comprehensive input sanitization, rate limiting, and error handling
+- **Caching System**: Intelligent caching for improved performance
+- **Structured Logging**: Advanced logging with multiple levels and file output
 
 ## Installation
 
@@ -116,10 +121,12 @@ Deletes a prompt (automatically removes associated metadata).
 ## Advanced Tools
 
 ### search-prompts
-Search prompts by filename or content.
+Advanced fuzzy search prompts by filename or content with intelligent ranking.
 - Parameters:
   - `query` - Search query string
   - `searchInContent` - (Optional) Boolean to search within prompt content (default: false)
+  - `limit` - (Optional) Maximum number of results to return (default: 10)
+  - `threshold` - (Optional) Minimum similarity threshold (0.0-1.0, default: 0.3)
 
 ### tag-prompt
 Add tags to a prompt for better organization.
@@ -190,6 +197,130 @@ Get the content of a specific version of a prompt.
 Get statistics about a prompt's version history including total versions, actions breakdown, and size history.
 - Parameters:
   - `filename` - Name of the prompt file to get statistics for
+
+## Template Library Tools
+
+The built-in template library includes 12 professional templates across 5 categories:
+
+### Available Template Categories:
+- **🖥️ Coding & Development** (3 templates): Code review, debugging help, API documentation
+- **🌐 Translation & Language** (2 templates): Text translation, grammar checking
+- **📝 Document Writing** (2 templates): Document summarization, meeting minutes
+- **📊 Analysis & Research** (2 templates): SWOT analysis, competitive analysis  
+- **🎓 Education & Learning** (3 templates): Lesson plans, quiz generation
+
+### list-template-categories
+List all available template categories with descriptions and template counts.
+- Parameters: None
+
+### list-templates-by-category
+List all templates in a specific category.
+- Parameters:
+  - `categoryId` - Category ID to list templates from
+
+### get-template-details
+Get detailed information about a specific template including variables and usage.
+- Parameters:
+  - `templateId` - Template ID (format: category.template-name)
+
+### search-templates
+Search through the template library using fuzzy matching.
+- Parameters:
+  - `query` - Search query string
+  - `category` - (Optional) Filter by specific category
+  - `tags` - (Optional) Array of tags to filter by
+  - `limit` - (Optional) Maximum number of results (default: 10)
+
+### render-template
+Render a template with provided variables and get the processed content.
+- Parameters:
+  - `templateId` - Template ID to render
+  - `variables` - Object with variable names and values
+  - `sanitizeOutput` - (Optional) Enable output sanitization (default: true)
+
+### validate-template
+Validate template syntax and check for potential issues.
+- Parameters:
+  - `templateId` - Template ID to validate
+
+### get-popular-templates
+Get list of most popular templates based on usage patterns.
+- Parameters:
+  - `limit` - (Optional) Number of templates to return (default: 5)
+
+### get-related-templates
+Get templates related to a specific template based on tags and categories.
+- Parameters:
+  - `templateId` - Template ID to find related templates for
+  - `limit` - (Optional) Number of related templates (default: 3)
+
+### get-template-library-stats
+Get comprehensive statistics about the template library.
+- Parameters: None
+
+### create-prompt-from-template
+Create a new prompt file using a template with variable substitution.
+- Parameters:
+  - `templateId` - Template ID to use
+  - `filename` - Name for the new prompt file
+  - `variables` - Object with template variables
+  - `addMetadata` - (Optional) Add template metadata to file (default: true)
+
+## Import/Export Tools
+
+### export-prompts
+Export prompts to JSON format for backup or sharing.
+- Parameters:
+  - `format` - (Optional) Export format: "json" (default: json)
+  - `includeMetadata` - (Optional) Include metadata in export (default: true)
+  - `includeVersionHistory` - (Optional) Include version history (default: false)
+  - `filterByTags` - (Optional) Array of tags to filter prompts
+  - `filterByCategory` - (Optional) Category to filter prompts
+  - `compress` - (Optional) Compress export data (default: false)
+
+### import-prompts
+Import prompts from JSON format with validation and conflict resolution.
+- Parameters:
+  - `importData` - Import data object in export format
+  - `overwriteExisting` - (Optional) Overwrite existing files (default: false)
+  - `skipDuplicates` - (Optional) Skip duplicate files (default: true)
+  - `validateChecksums` - (Optional) Validate file checksums (default: true)
+  - `createBackup` - (Optional) Create backup before import (default: true)
+  - `mergeMetadata` - (Optional) Merge with existing metadata (default: true)
+
+### get-import-export-status
+Get import/export system status and capabilities.
+- Parameters: None
+
+## Technical Features
+
+### Security & Performance
+- **Input Sanitization**: Comprehensive XSS and injection attack prevention
+- **Rate Limiting**: Configurable rate limiting with sliding window algorithm
+- **Caching System**: Multi-level LRU caching with TTL support for improved performance
+- **Error Handling**: Advanced error recovery and logging system
+- **File Validation**: SHA-256 checksums and integrity verification
+
+### Advanced Template Engine
+- **Conditional Logic**: Support for `{{#if}}`, `{{#unless}}`, `{{#each}}` constructs
+- **Loop Processing**: Iterate over arrays and objects in templates
+- **Function Calls**: Built-in helper functions for formatting and processing
+- **Nested Variables**: Support for complex object structures
+- **Error Recovery**: Graceful handling of missing variables and malformed templates
+
+### Fuzzy Search Algorithms
+- **Levenshtein Distance**: Character-based similarity matching
+- **Jaro-Winkler Distance**: Optimized for prefix matching
+- **N-gram Similarity**: Substring pattern matching
+- **Intelligent Ranking**: Multi-factor scoring with customizable thresholds
+- **Highlighting**: Search result highlighting for better user experience
+
+### Data Management
+- **Version Control**: Complete history tracking with diff comparison
+- **Metadata System**: Automatic tagging, categorization, and favorites
+- **Backup System**: Automated backup creation during import operations
+- **Export Formats**: JSON with optional compression and filtering
+- **File Organization**: Structured storage with hidden metadata directories
 
 ## Advanced Configuration
 
@@ -284,6 +415,53 @@ Or set environment variables in claude_desktop_config.json:
 12. **Getting version statistics**:
     - Tool: `get-prompt-version-stats`
     - Filename: `greeting.txt`
+
+### Template Library Usage
+
+13. **Browsing template categories**:
+    - Tool: `list-template-categories`
+
+14. **Using a template**:
+    - Tool: `render-template`
+    - TemplateId: `coding.code-review`
+    - Variables: `{"code": "function hello() { console.log('Hello'); }", "language": "javascript"}`
+
+15. **Creating prompt from template**:
+    - Tool: `create-prompt-from-template`
+    - TemplateId: `writing.meeting-minutes`
+    - Filename: `weekly-standup.txt`
+    - Variables: `{"meeting_title": "Weekly Standup", "date": "2024-08-04", "attendees": "Team Alpha"}`
+
+16. **Searching templates**:
+    - Tool: `search-templates`
+    - Query: `code review`
+    - Category: `coding`
+
+### Import/Export Usage
+
+17. **Exporting prompts for backup**:
+    - Tool: `export-prompts`
+    - IncludeMetadata: `true`
+    - IncludeVersionHistory: `false`
+    - FilterByTags: `["important", "production"]`
+
+18. **Importing prompts from backup**:
+    - Tool: `import-prompts`
+    - ImportData: `{exported data object}`
+    - CreateBackup: `true`
+    - OverwriteExisting: `false`
+
+19. **Checking import/export status**:
+    - Tool: `get-import-export-status`
+
+### Advanced Search Usage
+
+20. **Fuzzy search with parameters**:
+    - Tool: `search-prompts`
+    - Query: `custmer servce` (intentional typos)
+    - SearchInContent: `true`
+    - Threshold: `0.6`
+    - Limit: `15`
 
 ## Troubleshooting
 
