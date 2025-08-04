@@ -1,8 +1,13 @@
-const express = require('express');
-const fs = require('fs').promises;
-const path = require('path');
+import express from 'express';
+import { promises as fs } from 'fs';
+import path, { dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 const router = express.Router();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const PROMPTS_DIR = process.env.PROMPTS_DIR || path.join(__dirname, '..', 'prompts');
 
 // 파일 경로 검증 유틸리티 함수
@@ -181,4 +186,4 @@ router.delete('/:filename', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
