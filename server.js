@@ -46,6 +46,7 @@ import {
 } from "./utils/cache.js";
 import { fuzzySearch } from "./utils/fuzzy-search.js";
 import { templateLibrary } from "./utils/template-library.js";
+import { createImportExportManager } from "./utils/import-export.js";
 
 // ESM에서 __dirname 구하기
 const __filename = fileURLToPath(import.meta.url);
@@ -71,6 +72,9 @@ const caches = {
   search: createSearchCache(),
   templates: createTemplateCache()
 };
+
+// Import/Export 관리자 인스턴스 생성
+const importExportManager = createImportExportManager(PROMPTS_DIR);
 
 // 서버 인스턴스 생성
 const server = new McpServer({
@@ -1577,6 +1581,237 @@ server.tool(
       return createSuccessResponse(result);
     } catch (error) {
       return createErrorResponse(`템플릿으로부터 프롬프트 생성 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 내보내기 도구 등록
+server.tool(
+  "export-prompts",
+  "Export prompts to JSON format for backup or sharing",
+  {
+    format: z.enum(["json"]).optional().describe("Export format (default: json)"),
+    includeMetadata: z.boolean().optional().describe("Include metadata in export (default: true)"),
+    includeVersionHistory: z.boolean().optional().describe("Include version history in export (default: false)"),
+    filterByTags: z.array(z.string()).optional().describe("Filter prompts by tags"),
+    filterByCategory: z.string().optional().describe("Filter prompts by category"),
+    compress: z.boolean().optional().describe("Compress export data (default: false)")
+  },
+  async ({ format = "json", includeMetadata = true, includeVersionHistory = false, filterByTags = [], filterByCategory, compress = false }) => {
+    try {
+      checkRateLimit('export-prompts');
+      
+      log.info('Starting prompt export', { 
+        format, 
+        includeMetadata, 
+        includeVersionHistory,
+        filterByTags,
+        filterByCategory
+      });
+
+      const exportResult = await importExportManager.exportPrompts({
+        format,
+        includeMetadata,
+        includeVersionHistory,
+        filterByTags,
+        filterByCategory,
+        compress
+      });
+
+      if (exportResult.success) {
+        let result = `✅ 프롬프트 내보내기 완료!\n\n`;
+        result += `**형식**: ${format.toUpperCase()}\n`;
+        result += `**파일명**: ${exportResult.filename}\n`;
+        result += `**전체 프롬프트**: ${exportResult.summary.totalPrompts}개\n`;
+        result += `**내보낸 프롬프트**: ${exportResult.summary.exportedPrompts}개\n`;
+        result += `**생성 시간**: ${new Date(exportResult.summary.timestamp).toLocaleString('ko-KR')}\n`;
+        result += `**데이터 크기**: ${formatFileSize(JSON.stringify(exportResult.data).length)}\n\n`;
+        
+        if (filterByTags.length > 0) {
+          result += `**태그 필터**: ${filterByTags.join(', ')}\n`;
+        }
+        
+        if (filterByCategory) {
+          result += `**카테고리 필터**: ${filterByCategory}\n`;
+        }
+        
+        result += `**포함 항목**:\n`;
+        result += `- 프롬프트 내용: ✅\n`;
+        result += `- 메타데이터: ${includeMetadata ? '✅' : '❌'}\n`;
+        result += `- 버전 히스토리: ${includeVersionHistory ? '✅' : '❌'}\n\n`;
+        
+        result += `**내보내기 데이터 샘플**:\n`;
+        result += '```json\n';
+        result += JSON.stringify({
+          exportInfo: exportResult.data.exportInfo,
+          promptSample: exportResult.data.prompts.slice(0, 1).map(p => ({
+            filename: p.filename,
+            size: p.size,
+            checksum: p.checksum.substring(0, 8) + '...',
+            hasMetadata: !!p.metadata,
+            hasVersionHistory: !!p.versionHistory
+          }))
+        }, null, 2);
+        result += '\n```';
+
+        return createSuccessResponse(result);
+      } else {
+        return createErrorResponse('내보내기 실패');
+      }
+
+    } catch (error) {
+      log.error('Export failed', { error: error.message });
+      return createErrorResponse(`프롬프트 내보내기 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 프롬프트 가져오기 도구 등록
+server.tool(
+  "import-prompts",
+  "Import prompts from JSON format",
+  {
+    importData: z.object({
+      exportInfo: z.object({}).optional(),
+      prompts: z.array(z.object({
+        filename: z.string(),
+        content: z.string(),
+        checksum: z.string().optional(),
+        size: z.number().optional(),
+        created: z.string().optional(),
+        modified: z.string().optional(),
+        metadata: z.object({}).optional(),
+        versionHistory: z.array(z.object({})).optional()
+      }))
+    }).describe("Import data in export format"),
+    overwriteExisting: z.boolean().optional().describe("Overwrite existing files (default: false)"),
+    skipDuplicates: z.boolean().optional().describe("Skip duplicate files (default: true)"),
+    validateChecksums: z.boolean().optional().describe("Validate file checksums (default: true)"),
+    createBackup: z.boolean().optional().describe("Create backup before import (default: true)"),
+    mergeMetadata: z.boolean().optional().describe("Merge with existing metadata (default: true)")
+  },
+  async ({ importData, overwriteExisting = false, skipDuplicates = true, validateChecksums = true, createBackup = true, mergeMetadata = true }) => {
+    try {
+      checkRateLimit('import-prompts');
+      
+      log.info('Starting prompt import', { 
+        promptCount: importData.prompts?.length || 0,
+        overwriteExisting,
+        skipDuplicates,
+        validateChecksums,
+        createBackup
+      });
+
+      const importResult = await importExportManager.importPrompts(importData, {
+        overwriteExisting,
+        skipDuplicates,
+        validateChecksums,
+        createBackup,
+        mergeMetadata
+      });
+
+      if (importResult.success) {
+        // 캐시 무효화
+        caches.files.delete(CacheKeyGenerator.list());
+        caches.metadata.clear();
+        caches.search.clear();
+
+        let result = `✅ 프롬프트 가져오기 완료!\n\n`;
+        result += `**가져온 프롬프트**: ${importResult.imported}개\n`;
+        result += `**덮어쓴 프롬프트**: ${importResult.overwritten}개\n`;
+        result += `**건너뛴 프롬프트**: ${importResult.skipped}개\n`;
+        result += `**오류 발생**: ${importResult.errors.length}개\n\n`;
+        
+        if (importResult.backupInfo) {
+          result += `**백업 정보**:\n`;
+          result += `- 백업 위치: ${path.basename(importResult.backupInfo.backupDir)}\n`;
+          result += `- 백업된 파일: ${importResult.backupInfo.fileCount}개\n`;
+          result += `- 백업 시간: ${new Date(importResult.backupInfo.timestamp).toLocaleString('ko-KR')}\n\n`;
+        }
+        
+        if (importResult.errors.length > 0) {
+          result += `**오류 상세**:\n`;
+          importResult.errors.slice(0, 5).forEach(error => {
+            result += `- ${error.filename}: ${error.error}\n`;
+          });
+          if (importResult.errors.length > 5) {
+            result += `- ... 외 ${importResult.errors.length - 5}개 오류\n`;
+          }
+          result += '\n';
+        }
+        
+        result += `**처리된 파일 상세**:\n`;
+        importResult.processedFiles.slice(0, 10).forEach(file => {
+          const actionText = {
+            'imported': '✅ 가져옴',
+            'overwritten': '🔄 덮어씀',
+            'skipped': '⏭️ 건너뜀'
+          }[file.action] || file.action;
+          
+          result += `- ${file.filename}: ${actionText}\n`;
+        });
+        
+        if (importResult.processedFiles.length > 10) {
+          result += `- ... 외 ${importResult.processedFiles.length - 10}개 파일\n`;
+        }
+
+        return createSuccessResponse(result);
+      } else {
+        return createErrorResponse('가져오기 실패');
+      }
+
+    } catch (error) {
+      log.error('Import failed', { error: error.message });
+      return createErrorResponse(`프롬프트 가져오기 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 가져오기/내보내기 상태 조회 도구 등록
+server.tool(
+  "get-import-export-status",
+  "Get import/export system status and capabilities",
+  {},
+  async () => {
+    try {
+      checkRateLimit('get-import-export-status');
+      
+      const status = await importExportManager.getImportExportStatus();
+      
+      let result = `📊 가져오기/내보내기 시스템 상태\n\n`;
+      result += `**현재 프롬프트**: ${status.totalPrompts}개\n`;
+      result += `**메타데이터 지원**: ${status.hasMetadata ? '✅' : '❌'}\n`;
+      result += `**백업 개수**: ${status.backupCount}개\n`;
+      result += `**최대 파일 크기**: ${status.maxFileSize}\n\n`;
+      
+      if (status.lastBackup) {
+        result += `**최근 백업**:\n`;
+        result += `- 이름: ${status.lastBackup.name}\n`;
+        result += `- 생성 시간: ${new Date(status.lastBackup.created).toLocaleString('ko-KR')}\n`;
+        result += `- 파일 수: ${status.lastBackup.fileCount}개\n\n`;
+      }
+      
+      result += `**지원 형식**: ${status.supportedFormats.join(', ')}\n\n`;
+      
+      result += `**기능 지원**:\n`;
+      Object.entries(status.features).forEach(([feature, supported]) => {
+        const featureNames = {
+          export: '내보내기',
+          import: '가져오기',
+          backup: '백업',
+          validation: '유효성 검사',
+          metadata: '메타데이터',
+          versionHistory: '버전 히스토리'
+        };
+        
+        result += `- ${featureNames[feature] || feature}: ${supported ? '✅' : '❌'}\n`;
+      });
+
+      return createSuccessResponse(result);
+
+    } catch (error) {
+      log.error('Failed to get import/export status', { error: error.message });
+      return createErrorResponse(`상태 조회 실패: ${error.message}`, error);
     }
   }
 );
