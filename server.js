@@ -44,6 +44,8 @@ import {
   createTemplateCache,
   CacheKeyGenerator 
 } from "./utils/cache.js";
+import { fuzzySearch } from "./utils/fuzzy-search.js";
+import { templateLibrary } from "./utils/template-library.js";
 
 // ESM에서 __dirname 구하기
 const __filename = fileURLToPath(import.meta.url);
@@ -394,68 +396,235 @@ server.tool(
   }
 );
 
-// 프롬프트 검색 도구 등록
+// 프롬프트 검색 도구 등록 (퍼지 검색)
 server.tool(
   "search-prompts",
-  "Search prompts by filename or content",
+  "Search prompts by filename or content with intelligent fuzzy matching",
   {
-    query: z.string().describe("Search query to match against filename or content"),
-    searchInContent: z.boolean().optional().describe("Whether to search in prompt content (default: false)")
+    query: z.string().describe("Search query (supports typos and partial matches)"),
+    searchInContent: z.boolean().optional().describe("Whether to search in prompt content (default: true)"),
+    searchInMeta: z.boolean().optional().describe("Whether to search in metadata (tags, category) (default: true)"),
+    threshold: z.number().optional().describe("Similarity threshold (0-1, lower = more permissive, default: 0.3)"),
+    maxResults: z.number().optional().describe("Maximum number of results (default: 10)")
   },
-  async ({ query, searchInContent = false }) => {
+  async ({ query, searchInContent = true, searchInMeta = true, threshold = 0.3, maxResults = 10 }) => {
     try {
       // Rate limiting 적용
       checkRateLimit('search-prompts');
+      
+      // 입력 검증
+      const sanitizedQuery = inputSanitizer.sanitizeText(query, { 
+        maxLength: 200, 
+        allowHTML: false 
+      });
+      
+      if (!sanitizedQuery) {
+        return createErrorResponse('검색어를 입력해주세요');
+      }
+
+      // 캐시 확인
+      const cacheKey = CacheKeyGenerator.search(sanitizedQuery, { searchInContent, searchInMeta, threshold });
+      let cachedResults = caches.search.get(cacheKey);
+      
+      if (cachedResults) {
+        log.debug('Search results served from cache', { 
+          query: sanitizedQuery 
+        });
+        return createSuccessResponse(cachedResults);
+      }
+
       const files = await fs.readdir(PROMPTS_DIR);
-      const matchedPrompts = [];
+      const promptFiles = files.filter(f => !f.startsWith('.'));
+      const searchItems = [];
 
-      for (const filename of files) {
+      // 프롬프트 데이터 수집
+      for (const filename of promptFiles) {
         const filePath = path.join(PROMPTS_DIR, filename);
-        let isMatch = false;
+        const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
+        
+        try {
+          const stats = await fs.stat(filePath);
+          const item = {
+            name: filename,
+            size: stats.size,
+            modified: stats.mtime,
+            content: '',
+            metadata: { tags: [], category: '', description: '' }
+          };
 
-        // 파일명 검색
-        if (filename.toLowerCase().includes(query.toLowerCase())) {
-          isMatch = true;
-        }
-
-        // 내용 검색 (옵션)
-        if (!isMatch && searchInContent) {
-          try {
-            const content = await fs.readFile(filePath, "utf-8");
-            const normalizedContent = content.toLowerCase().replace(/\s+/g, ' ').trim();
-            const normalizedQuery = query.toLowerCase().replace(/\s+/g, ' ').trim();
-            if (normalizedContent.includes(normalizedQuery)) {
-              isMatch = true;
+          // 내용 읽기
+          if (searchInContent) {
+            try {
+              item.content = await fs.readFile(filePath, "utf-8");
+            } catch (e) {
+              log.warn('Failed to read prompt content', { filename, error: e.message });
             }
-          } catch (e) {
-            // 파일 읽기 실패 시 무시
+          }
+
+          // 메타데이터 읽기
+          if (searchInMeta) {
+            try {
+              const metaContent = await fs.readFile(metaPath, "utf-8");
+              item.metadata = JSON.parse(metaContent);
+            } catch (e) {
+              // 메타데이터가 없어도 계속 진행
+            }
+          }
+
+          searchItems.push(item);
+        } catch (e) {
+          log.warn('Failed to process prompt file', { filename, error: e.message });
+        }
+      }
+
+      if (searchItems.length === 0) {
+        return createSuccessResponse('검색할 프롬프트가 없습니다');
+      }
+
+      // 퍼지 검색 설정
+      const fuzzySearcher = new fuzzySearch.constructor({ 
+        threshold, 
+        caseSensitive: false, 
+        includeScore: true 
+      });
+
+      // 다중 필드 검색 수행
+      const searchFields = {};
+      if (searchInContent) searchFields.content = sanitizedQuery;
+      if (searchInMeta) {
+        searchFields['metadata.category'] = sanitizedQuery;
+        searchFields['metadata.description'] = sanitizedQuery;
+      }
+      
+      // 파일명은 항상 검색
+      searchFields.name = sanitizedQuery;
+
+      let results = [];
+
+      // 개별 필드별로 검색 수행
+      for (const [field, fieldQuery] of Object.entries(searchFields)) {
+        const fieldResults = fuzzySearcher.searchObjects(fieldQuery, searchItems, [field]);
+        
+        // 기존 결과와 병합 (중복 제거)
+        for (const result of fieldResults) {
+          const existingIndex = results.findIndex(r => r.item.name === result.item.name);
+          if (existingIndex >= 0) {
+            // 더 높은 점수로 업데이트
+            if (result.score > results[existingIndex].score) {
+              results[existingIndex] = { 
+                ...result, 
+                matchedField: field, 
+                matchedValue: result.matchedValue 
+              };
+            }
+          } else {
+            results.push({ 
+              ...result, 
+              matchedField: field, 
+              matchedValue: result.matchedValue 
+            });
           }
         }
+      }
 
-        if (isMatch) {
-          const stats = await fs.stat(filePath);
-          matchedPrompts.push({
-            name: filename,
-            size: formatFileSize(stats.size),
-            modified: formatDate(new Date(stats.mtime))
-          });
+      // 태그 검색 (배열 처리)
+      if (searchInMeta) {
+        for (const item of searchItems) {
+          if (item.metadata.tags && Array.isArray(item.metadata.tags)) {
+            const tagResults = fuzzySearcher.searchStrings(sanitizedQuery, item.metadata.tags);
+            if (tagResults.length > 0) {
+              const bestTagMatch = tagResults[0];
+              const existingIndex = results.findIndex(r => r.item.name === item.name);
+              
+              if (existingIndex >= 0) {
+                if (bestTagMatch.score > results[existingIndex].score) {
+                  results[existingIndex] = {
+                    item,
+                    score: bestTagMatch.score,
+                    matchedField: 'tags',
+                    matchedValue: bestTagMatch.item
+                  };
+                }
+              } else if (bestTagMatch.score >= threshold) {
+                results.push({
+                  item,
+                  score: bestTagMatch.score,
+                  matchedField: 'tags',
+                  matchedValue: bestTagMatch.item
+                });
+              }
+            }
+          }
         }
       }
 
-      if (matchedPrompts.length === 0) {
-        return createSuccessResponse(`No prompts found matching "${query}"`);
+      // 결과 정렬 및 제한
+      results.sort((a, b) => b.score - a.score);
+      results = results.slice(0, maxResults);
+
+      if (results.length === 0) {
+        const noResultsMessage = `"${sanitizedQuery}"와 일치하는 프롬프트를 찾을 수 없습니다.\n\n💡 검색 팁:\n- 철자를 확인해보세요\n- 더 간단한 단어를 사용해보세요\n- 임계값을 낮춰보세요 (현재: ${threshold})`;
+        
+        // 캐시에 저장 (빈 결과도 짧게 캐시)
+        caches.search.set(cacheKey, noResultsMessage, 60000); // 1분
+        
+        return createSuccessResponse(noResultsMessage);
       }
 
-      const resultsList = matchedPrompts.map(p => 
-        `${p.name} (${p.size}, last modified: ${p.modified})`
-      ).join("\n");
+      // 결과 포맷팅
+      let resultText = `🔍 검색 결과: "${sanitizedQuery}" (${results.length}개 발견)\n\n`;
+      
+      results.forEach((result, index) => {
+        const item = result.item;
+        const matchInfo = result.matchedField === 'tags' ? 
+          `태그: ${result.matchedValue}` : 
+          `${result.matchedField}: ${result.matchedValue?.substring(0, 50) || ''}${result.matchedValue?.length > 50 ? '...' : ''}`;
+        
+        resultText += `${index + 1}. **${item.name}** (점수: ${(result.score * 100).toFixed(1)}%)\n`;
+        resultText += `   📊 ${formatFileSize(item.size)} | 📅 ${formatDate(new Date(item.modified))}\n`;
+        resultText += `   🎯 매치: ${matchInfo}\n`;
+        
+        if (item.metadata.category) {
+          resultText += `   📂 카테고리: ${item.metadata.category}\n`;
+        }
+        
+        if (item.metadata.tags && item.metadata.tags.length > 0) {
+          resultText += `   🏷️ 태그: ${item.metadata.tags.join(', ')}\n`;
+        }
+        
+        resultText += '\n';
+      });
 
-      return createSuccessResponse(`Found ${matchedPrompts.length} prompt(s) matching "${query}":\n\n${resultsList}`);
+      // 검색 통계 추가
+      const stats = fuzzySearcher.getSearchStats(sanitizedQuery, searchItems);
+      resultText += `📈 검색 통계:\n`;
+      resultText += `- 전체 프롬프트: ${stats.totalItems}개\n`;
+      resultText += `- 매치율: ${(stats.matchRate * 100).toFixed(1)}%\n`;
+      resultText += `- 평균 점수: ${(stats.averageScore * 100).toFixed(1)}%\n`;
+      resultText += `- 임계값: ${(threshold * 100).toFixed(1)}%`;
+
+      // 캐시에 저장 (2분 TTL)
+      caches.search.set(cacheKey, resultText, 120000);
+      
+      log.info('Search completed', {
+        query: sanitizedQuery,
+        resultCount: results.length,
+        searchTime: Date.now(),
+        fields: Object.keys(searchFields)
+      });
+
+      return createSuccessResponse(resultText);
     } catch (error) {
-      return createErrorResponse(`Failed to search prompts: ${error.message}`, error);
+      log.error('Search failed', {
+        query,
+        error: error.message,
+        stack: error.stack
+      });
+      return createErrorResponse(`검색 실패: ${error.message}`, error);
     }
   }
 );
+
 
 // 프롬프트 태그 추가 도구 등록
 server.tool(
@@ -1049,6 +1218,365 @@ server.tool(
       return createSuccessResponse(result);
     } catch (error) {
       return createErrorResponse(`Failed to get version statistics for ${filename}: ${error.message}`, error);
+    }
+  }
+);
+
+// 템플릿 라이브러리 카테고리 목록 조회 도구 등록
+server.tool(
+  "list-template-categories",
+  "List all available template categories in the template library",
+  {},
+  async () => {
+    try {
+      checkRateLimit('list-template-categories');
+      
+      const categories = templateLibrary.getCategories();
+      
+      if (categories.length === 0) {
+        return createSuccessResponse('템플릿 카테고리가 없습니다.');
+      }
+
+      let result = `📚 템플릿 라이브러리 카테고리 (${categories.length}개)\n\n`;
+      
+      categories.forEach((category, index) => {
+        result += `${index + 1}. **${category.name}** (${category.templateCount}개 템플릿)\n`;
+        result += `   ${category.description}\n`;
+        result += `   ID: \`${category.id}\`\n\n`;
+      });
+
+      const stats = templateLibrary.getStatistics();
+      result += `📊 전체 통계:\n`;
+      result += `- 총 템플릿: ${stats.totalTemplates}개\n`;
+      result += `- 총 카테고리: ${stats.totalCategories}개\n`;
+      result += `- 총 태그: ${stats.totalTags}개\n\n`;
+      
+      result += `🏷️ 인기 태그:\n`;
+      stats.mostCommonTags.slice(0, 5).forEach(({tag, count}) => {
+        result += `- ${tag} (${count}개)\n`;
+      });
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`템플릿 카테고리 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 특정 카테고리의 템플릿 목록 조회 도구 등록
+server.tool(
+  "list-templates-by-category",
+  "List all templates in a specific category",
+  {
+    category: z.string().describe("Category ID to list templates from")
+  },
+  async ({ category }) => {
+    try {
+      checkRateLimit('list-templates-by-category');
+      
+      const templates = templateLibrary.getTemplatesByCategory(category);
+      
+      if (templates.length === 0) {
+        return createSuccessResponse(`카테고리 "${category}"에 템플릿이 없습니다.`);
+      }
+
+      let result = `📁 카테고리: ${category} (${templates.length}개 템플릿)\n\n`;
+      
+      templates.forEach((template, index) => {
+        result += `${index + 1}. **${template.name}**\n`;
+        result += `   ${template.description}\n`;
+        result += `   ID: \`${template.id}\`\n`;
+        
+        if (template.tags.length > 0) {
+          result += `   태그: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n`;
+        }
+        
+        if (template.variables.length > 0) {
+          result += `   필요 변수: ${template.variables.map(v => `\`${v}\``).join(', ')}\n`;
+        }
+        
+        result += '\n';
+      });
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`템플릿 목록 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 템플릿 상세 정보 조회 도구 등록
+server.tool(
+  "get-template-details",
+  "Get detailed information about a specific template",
+  {
+    templateId: z.string().describe("Template ID (format: category.template)")
+  },
+  async ({ templateId }) => {
+    try {
+      checkRateLimit('get-template-details');
+      
+      const template = templateLibrary.getTemplate(templateId);
+      
+      let result = `📋 템플릿 상세 정보\n\n`;
+      result += `**이름**: ${template.name}\n`;
+      result += `**ID**: ${template.id}\n`;
+      result += `**카테고리**: ${template.categoryName}\n`;
+      result += `**설명**: ${template.description}\n\n`;
+      
+      if (template.tags.length > 0) {
+        result += `**태그**: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n\n`;
+      }
+      
+      if (template.variables.length > 0) {
+        result += `**필요 변수** (${template.variables.length}개):\n`;
+        template.variables.forEach(variable => {
+          result += `- \`{{${variable}}}\`\n`;
+        });
+        result += '\n';
+      }
+      
+      result += `**템플릿 내용**:\n`;
+      result += '```\n';
+      result += template.template;
+      result += '\n```\n\n';
+      
+      // 관련 템플릿 추천
+      const relatedTemplates = templateLibrary.getRelatedTemplates(templateId, 3);
+      if (relatedTemplates.length > 0) {
+        result += `🔗 **관련 템플릿**:\n`;
+        relatedTemplates.forEach(related => {
+          result += `- ${related.name} (\`${related.id}\`)\n`;
+        });
+      }
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`템플릿 상세 정보 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 템플릿 검색 도구 등록
+server.tool(
+  "search-templates",
+  "Search templates in the template library",
+  {
+    query: z.string().describe("Search query"),
+    category: z.string().optional().describe("Filter by category"),
+    tags: z.array(z.string()).optional().describe("Filter by tags"),
+    limit: z.number().optional().describe("Maximum number of results (default: 10)")
+  },
+  async ({ query, category, tags = [], limit = 10 }) => {
+    try {
+      checkRateLimit('search-templates');
+      
+      const results = templateLibrary.searchTemplates(query, {
+        category,
+        tags,
+        limit
+      });
+      
+      if (results.length === 0) {
+        return createSuccessResponse(`"${query}"에 대한 템플릿을 찾을 수 없습니다.`);
+      }
+
+      let result = `🔍 템플릿 검색 결과: "${query}" (${results.length}개 발견)\n\n`;
+      
+      results.forEach((template, index) => {
+        result += `${index + 1}. **${template.name}**\n`;
+        result += `   ${template.description}\n`;
+        result += `   ID: \`${template.id}\` | 카테고리: ${template.categoryName}\n`;
+        
+        if (template.tags.length > 0) {
+          result += `   태그: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n`;
+        }
+        
+        if (template.score) {
+          result += `   매치 점수: ${(template.score * 100).toFixed(0)}%\n`;
+        }
+        
+        result += '\n';
+      });
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`템플릿 검색 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 템플릿 렌더링 도구 등록
+server.tool(
+  "render-template",
+  "Render a template with provided variables",
+  {
+    templateId: z.string().describe("Template ID (format: category.template)"),
+    variables: z.record(z.any()).describe("Variables to use in template rendering")
+  },
+  async ({ templateId, variables }) => {
+    try {
+      checkRateLimit('render-template');
+      
+      const result = templateLibrary.renderTemplate(templateId, variables);
+      
+      let response = `✅ 템플릿 렌더링 완료: **${result.templateName}**\n\n`;
+      
+      response += `**렌더링 결과**:\n`;
+      response += '---\n';
+      response += result.renderedContent;
+      response += '\n---\n\n';
+      
+      response += `📊 **렌더링 정보**:\n`;
+      response += `- 사용된 변수: ${result.usedVariables.length}개 (${result.usedVariables.join(', ')})\n`;
+      response += `- 필요한 변수: ${result.requiredVariables.length}개\n`;
+      
+      if (result.missingVariables.length > 0) {
+        response += `- ⚠️ 누락된 변수: ${result.missingVariables.join(', ')}\n`;
+      }
+      
+      response += `- 출력 길이: ${result.renderedContent.length}자\n`;
+
+      return createSuccessResponse(response);
+    } catch (error) {
+      return createErrorResponse(`템플릿 렌더링 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 인기 템플릿 조회 도구 등록
+server.tool(
+  "get-popular-templates",
+  "Get most popular templates from the library",
+  {
+    limit: z.number().optional().describe("Number of templates to return (default: 5)")
+  },
+  async ({ limit = 5 }) => {
+    try {
+      checkRateLimit('get-popular-templates');
+      
+      const popularTemplates = templateLibrary.getPopularTemplates(limit);
+      
+      if (popularTemplates.length === 0) {
+        return createSuccessResponse('인기 템플릿이 없습니다.');
+      }
+
+      let result = `🌟 인기 템플릿 TOP ${popularTemplates.length}\n\n`;
+      
+      popularTemplates.forEach((template, index) => {
+        result += `${index + 1}. **${template.name}**\n`;
+        result += `   ${template.description}\n`;
+        result += `   ID: \`${template.id}\` | 카테고리: ${template.categoryName}\n`;
+        result += `   태그: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n\n`;
+      });
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`인기 템플릿 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 템플릿을 프롬프트로 생성하는 도구 등록
+server.tool(
+  "create-prompt-from-template",
+  "Create a new prompt file from a template with variables",
+  {
+    templateId: z.string().describe("Template ID to use"),
+    filename: z.string().describe("Filename for the new prompt"),
+    variables: z.record(z.any()).describe("Variables to use in template rendering"),
+    addMetadata: z.boolean().optional().describe("Whether to add template metadata (default: true)")
+  },
+  async ({ templateId, filename, variables, addMetadata = true }) => {
+    try {
+      checkRateLimit('create-prompt-from-template');
+      
+      // 템플릿 렌더링
+      const renderResult = templateLibrary.renderTemplate(templateId, variables);
+      const template = templateLibrary.getTemplate(templateId);
+      
+      // 파일명 정제
+      const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
+      
+      // 파일 경로 설정
+      const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
+      
+      // 파일 존재 여부 확인
+      try {
+        await fs.access(filePath);
+        return createErrorResponse(`프롬프트 "${sanitizedFilename}"이 이미 존재합니다.`);
+      } catch (e) {
+        // 파일이 없으면 계속 진행
+      }
+      
+      // 프롬프트 내용 생성
+      let promptContent = renderResult.renderedContent;
+      
+      // 템플릿 정보를 주석으로 추가 (선택사항)
+      if (addMetadata) {
+        const metadataComment = `<!-- 
+템플릿: ${template.name} (${templateId})
+생성일: ${new Date().toISOString()}
+사용된 변수: ${Object.keys(variables).join(', ')}
+-->
+
+`;
+        promptContent = metadataComment + promptContent;
+      }
+      
+      // 파일 생성
+      await fs.writeFile(filePath, promptContent, "utf-8");
+      
+      // 버전 히스토리에 저장
+      const version = await versionManager.saveVersion(sanitizedFilename, promptContent, "create_from_template");
+      
+      // 메타데이터 생성
+      if (addMetadata) {
+        const metaPath = path.join(PROMPTS_DIR, `.${sanitizedFilename}.meta`);
+        const metadata = {
+          tags: [...template.tags, 'template-generated'],
+          category: template.categoryId,
+          description: `${template.name} 템플릿으로 생성됨`,
+          templateId: templateId,
+          templateName: template.name,
+          generatedDate: new Date().toISOString(),
+          usedVariables: Object.keys(variables),
+          lastModified: new Date().toISOString()
+        };
+        
+        await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), "utf-8");
+      }
+      
+      // 캐시 무효화
+      caches.files.delete(CacheKeyGenerator.list());
+      
+      let result = `✅ 템플릿으로부터 프롬프트 생성 완료!\n\n`;
+      result += `**파일명**: ${sanitizedFilename}\n`;
+      result += `**템플릿**: ${template.name} (\`${templateId}\`)\n`;
+      result += `**버전**: ${version.version}\n`;
+      result += `**크기**: ${formatFileSize(promptContent.length)}\n\n`;
+      
+      if (renderResult.missingVariables.length > 0) {
+        result += `⚠️ **누락된 변수**: ${renderResult.missingVariables.join(', ')}\n`;
+        result += `이 변수들은 템플릿에서 빈 값으로 처리되었습니다.\n\n`;
+      }
+      
+      result += `**내용 미리보기** (처음 200자):\n`;
+      result += '```\n';
+      result += promptContent.substring(0, 200);
+      if (promptContent.length > 200) result += '...';
+      result += '\n```';
+
+      log.info('Prompt created from template', {
+        templateId,
+        filename: sanitizedFilename,
+        version: version.version,
+        variableCount: Object.keys(variables).length
+      });
+
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`템플릿으로부터 프롬프트 생성 실패: ${error.message}`, error);
     }
   }
 );
