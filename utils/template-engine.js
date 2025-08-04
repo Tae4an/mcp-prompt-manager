@@ -222,7 +222,12 @@ export class TemplateEngine {
           '@length': array.length
         };
         
-        return this.processVariables(content, itemContext);
+        // 객체나 배열인 경우 각 속성을 직접 접근 가능하게 함
+        if (typeof item === 'object' && item !== null) {
+          Object.assign(itemContext, item);
+        }
+        
+        return this.render(content, itemContext, { maxIterations: 50, sanitizeOutput: false });
       }).join('');
     });
   }
@@ -248,14 +253,14 @@ export class TemplateEngine {
         }
 
         log.warn('Unknown function called in template', { funcName, args });
-        return match;
+        return '';
 
       } catch (error) {
         log.error('Function execution failed in template', {
           funcName,
           error: error.message
         });
-        return match;
+        return '';
       }
     });
   }
@@ -422,7 +427,7 @@ export class TemplateEngine {
     });
 
     // each 블록에서 사용된 변수들
-    const eachMatches = template.matchAll(this.patterns.eachBlock) || [];
+    const eachMatches = [...(template.matchAll(this.patterns.eachBlock) || [])];
     eachMatches.forEach(match => {
       const arrayPath = match[1].trim();
       variables.add(arrayPath.split('.')[0]);
