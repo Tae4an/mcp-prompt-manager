@@ -34,6 +34,16 @@ import {
   globalErrorTracker
 } from "./utils/error-handler.js";
 import { log, defaultLogger } from "./utils/logger.js";
+import { RateLimiter, rateLimitPresets } from "./utils/rate-limiter.js";
+import { inputSanitizer } from "./utils/input-sanitizer.js";
+import { templateEngine } from "./utils/template-engine.js";
+import { 
+  createFileCache, 
+  createMetadataCache, 
+  createSearchCache, 
+  createTemplateCache,
+  CacheKeyGenerator 
+} from "./utils/cache.js";
 
 // ESM에서 __dirname 구하기
 const __filename = fileURLToPath(import.meta.url);
@@ -44,6 +54,21 @@ const PROMPTS_DIR = process.env.PROMPTS_DIR || path.join(__dirname, "prompts");
 
 // 버전 관리자 인스턴스 생성
 const versionManager = new VersionManager(PROMPTS_DIR);
+
+// Rate limiter 인스턴스 생성
+const rateLimiters = {
+  standard: new RateLimiter(rateLimitPresets.standard),
+  strict: new RateLimiter(rateLimitPresets.strict),
+  upload: new RateLimiter(rateLimitPresets.upload)
+};
+
+// 캐시 인스턴스 생성
+const caches = {
+  files: createFileCache(),
+  metadata: createMetadataCache(),
+  search: createSearchCache(),
+  templates: createTemplateCache()
+};
 
 // 서버 인스턴스 생성
 const server = new McpServer({
@@ -66,6 +91,23 @@ async function ensurePromptsDir() {
   }
 }
 
+// Rate limiting helper function
+function checkRateLimit(operation, clientId = 'default') {
+  const limiter = rateLimiters.standard;
+  const result = limiter.checkLimit(clientId);
+  
+  if (!result.allowed) {
+    log.warn('Rate limit exceeded for operation', {
+      operation,
+      clientId,
+      retryAfter: result.retryAfter
+    });
+    throw new Error(`Rate limit exceeded. Retry after ${result.retryAfter} seconds.`);
+  }
+  
+  return result;
+}
+
 // 프롬프트 목록 조회 도구 등록
 server.tool(
   "list-prompts",
@@ -73,18 +115,34 @@ server.tool(
   {},
   async () => {
     try {
-      const files = await fs.readdir(PROMPTS_DIR);
-      const prompts = await Promise.all(
-        files.map(async (filename) => {
-          const filePath = path.join(PROMPTS_DIR, filename);
-          const stats = await fs.stat(filePath);
-          return {
-            name: filename,
-            size: stats.size,
-            modified: stats.mtime.toISOString()
-          };
-        })
-      );
+      // Rate limiting 적용
+      checkRateLimit('list-prompts');
+      
+      // 캐시 확인
+      const cacheKey = CacheKeyGenerator.list();
+      let prompts = caches.files.get(cacheKey);
+      
+      if (!prompts) {
+        // 캐시 미스 - 파일 시스템에서 읽기
+        const files = await fs.readdir(PROMPTS_DIR);
+        prompts = await Promise.all(
+          files.map(async (filename) => {
+            const filePath = path.join(PROMPTS_DIR, filename);
+            const stats = await fs.stat(filePath);
+            return {
+              name: filename,
+              size: stats.size,
+              modified: stats.mtime.toISOString()
+            };
+          })
+        );
+        
+        // 캐시에 저장 (5분 TTL)
+        caches.files.set(cacheKey, prompts, 300000);
+        log.debug('Prompt list cached', { count: prompts.length });
+      } else {
+        log.debug('Prompt list served from cache', { count: prompts.length });
+      }
 
       if (prompts.length === 0) {
         return createSuccessResponse("No prompts found. Create one using the create-prompt tool.");
@@ -111,10 +169,29 @@ server.tool(
   },
   async ({ filename }) => {
     try {
-      const filePath = path.join(PROMPTS_DIR, filename);
-      const content = await fs.readFile(filePath, "utf-8");
+      // Rate limiting 적용
+      checkRateLimit('get-prompt');
       
-      return createSuccessResponse(`Prompt: ${filename}\n\n${content}`);
+      // 입력 정제
+      const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
+      
+      // 캐시 확인
+      const cacheKey = CacheKeyGenerator.file(sanitizedFilename);
+      let content = caches.files.get(cacheKey);
+      
+      if (!content) {
+        // 캐시 미스 - 파일 시스템에서 읽기
+        const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
+        content = await fs.readFile(filePath, "utf-8");
+        
+        // 캐시에 저장 (10분 TTL)
+        caches.files.set(cacheKey, content, 600000);
+        log.debug('Prompt content cached', { filename: sanitizedFilename, size: content.length });
+      } else {
+        log.debug('Prompt content served from cache', { filename: sanitizedFilename });
+      }
+      
+      return createSuccessResponse(`Prompt: ${sanitizedFilename}\n\n${content}`);
     } catch (error) {
       return createErrorResponse(`Failed to get prompt ${filename}: ${error.message}`, error);
     }
@@ -131,25 +208,45 @@ server.tool(
   },
   async ({ filename, content }) => {
     try {
-      // 입력 검증
-      const filenameValidation = validateFilename(filename);
+      // Rate limiting 적용 (업로드 타입 제한)
+      checkRateLimit('create-prompt');
+      
+      // 고급 입력 검증 및 정제
+      const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
+      const sanitizedContent = inputSanitizer.sanitizeText(content, { 
+        maxLength: 1024 * 1024, // 1MB
+        allowHTML: false,
+        allowNewlines: true 
+      });
+      
+      // 위험도 평가
+      const filenameRisk = inputSanitizer.assessRisk(sanitizedFilename);
+      const contentRisk = inputSanitizer.assessRisk(sanitizedContent);
+      
+      if (filenameRisk.level === 'high' || contentRisk.level === 'high') {
+        log.warn('High risk input detected', {
+          operation: 'create-prompt',
+          filenameRisk,
+          contentRisk
+        });
+        throw new ValidationError('위험한 입력이 감지되었습니다', 'security');
+      }
+      
+      // 기존 검증 로직도 유지
+      const filenameValidation = validateFilename(sanitizedFilename);
       if (!filenameValidation.isValid) {
         throw new ValidationError(filenameValidation.error, 'filename');
       }
 
-      const contentValidation = validateContent(content);
+      const contentValidation = validateContent(sanitizedContent);
       if (!contentValidation.isValid) {
         throw new ValidationError(contentValidation.error, 'content');
       }
 
       // 경로 안전성 검증
-      if (!validatePathSafety(filename)) {
-        throw new ValidationError(`Unsafe path detected: ${filename}`, 'filename');
+      if (!validatePathSafety(sanitizedFilename)) {
+        throw new ValidationError(`Unsafe path detected: ${sanitizedFilename}`, 'filename');
       }
-
-      // 입력 정제
-      const sanitizedFilename = sanitizeInput(filename);
-      const sanitizedContent = sanitizeInput(content);
       
       const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
       
@@ -190,6 +287,10 @@ server.tool(
       
       await timer.end({ operation: 'create-prompt', filename: sanitizedFilename });
       
+      // 캐시 무효화 (리스트 캐시 삭제)
+      caches.files.delete(CacheKeyGenerator.list());
+      log.debug('Cache invalidated after prompt creation');
+      
       return toMcpSuccessResponse(result);
     } catch (error) {
       return toMcpErrorResponse(error);
@@ -207,6 +308,9 @@ server.tool(
   },
   async ({ filename, content }) => {
     try {
+      // Rate limiting 적용
+      checkRateLimit('update-prompt');
+      
       // 입력 검증
       const filenameValidation = validateFilename(filename);
       if (!filenameValidation.isValid) {
@@ -257,6 +361,8 @@ server.tool(
   },
   async ({ filename }) => {
     try {
+      // Rate limiting 적용
+      checkRateLimit('delete-prompt');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
       
@@ -298,6 +404,8 @@ server.tool(
   },
   async ({ query, searchInContent = false }) => {
     try {
+      // Rate limiting 적용
+      checkRateLimit('search-prompts');
       const files = await fs.readdir(PROMPTS_DIR);
       const matchedPrompts = [];
 
@@ -502,43 +610,75 @@ server.tool(
 // 프롬프트 템플릿 처리 도구 등록
 server.tool(
   "process-template",
-  "Process a prompt template with variable substitution",
+  "Process a prompt template with advanced logic (conditions, loops, functions)",
   {
     filename: z.string().describe("The filename of the template prompt"),
-    variables: z.record(z.string()).describe("Object with variable names as keys and replacement values as values")
+    variables: z.record(z.any()).describe("Object with variable names as keys and values (supports nested objects and arrays)")
   },
   async ({ filename, variables }) => {
     try {
-      const filePath = path.join(PROMPTS_DIR, filename);
+      // Rate limiting 적용
+      checkRateLimit('process-template');
+      
+      // 입력 검증
+      const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
+      const filenameRisk = inputSanitizer.assessRisk(sanitizedFilename);
+      
+      if (filenameRisk.level === 'high') {
+        throw new ValidationError('위험한 파일명이 감지되었습니다', 'filename');
+      }
+      
+      const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
       
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
       } catch (e) {
-        return createErrorResponse(`Template "${filename}" does not exist.`);
+        return createErrorResponse(`Template "${sanitizedFilename}" does not exist.`);
       }
 
       // 템플릿 내용 읽기
       const templateContent = await fs.readFile(filePath, "utf-8");
       
-      // 변수 치환 수행
-      let processedContent = templateContent;
-      
-      // {{variable}} 형태의 변수를 치환
-      for (const [key, value] of Object.entries(variables)) {
-        const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
-        processedContent = processedContent.replace(regex, value);
+      // 템플릿 유효성 검사
+      const validation = templateEngine.validate(templateContent);
+      if (!validation.isValid) {
+        return createErrorResponse(
+          `Template validation failed: ${validation.errors.join(', ')}`
+        );
       }
-
-      // 치환되지 않은 변수 찾기
-      const unmatchedVariables = processedContent.match(/\{\{\s*[^}]+\s*\}\}/g) || [];
       
-      let result = `Processed template "${filename}":\n\n${processedContent}`;
+      // 변수 정제 및 위험도 평가
+      const sanitizedVariables = inputSanitizer.sanitizeObject(variables, {
+        maxDepth: 5,
+        maxKeys: 50,
+        maxStringLength: 10000
+      });
       
-      if (unmatchedVariables.length > 0) {
-        const uniqueUnmatched = [...new Set(unmatchedVariables)];
-        result += `\n\n⚠️ Unmatched variables found: ${uniqueUnmatched.join(", ")}`;
+      // 템플릿 렌더링 (고급 기능 사용)
+      const processedContent = templateEngine.render(templateContent, sanitizedVariables, {
+        maxIterations: 100,
+        sanitizeOutput: true,
+        logExecution: true
+      });
+      
+      // 사용된 변수들 추출
+      const requiredVariables = templateEngine.extractVariables(templateContent);
+      const providedVariables = Object.keys(variables);
+      const missingVariables = requiredVariables.filter(v => !providedVariables.includes(v));
+      
+      let result = `Processed template "${sanitizedFilename}":\n\n${processedContent}`;
+      
+      if (missingVariables.length > 0) {
+        result += `\n\n⚠️ Missing variables: ${missingVariables.join(", ")}`;
       }
+      
+      // 템플릿 처리 통계
+      result += `\n\n📊 Template Stats:`;
+      result += `\n- Required variables: ${requiredVariables.length}`;
+      result += `\n- Provided variables: ${providedVariables.length}`;
+      result += `\n- Template length: ${templateContent.length} chars`;
+      result += `\n- Output length: ${processedContent.length} chars`;
 
       return createSuccessResponse(result);
     } catch (error) {
