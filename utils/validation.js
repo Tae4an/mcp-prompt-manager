@@ -21,7 +21,20 @@ export const FileNameSchema = z.string()
   );
 
 export const ContentSchema = z.string()
-  .max(1024 * 1024, '내용은 1MB를 초과할 수 없습니다'); // 1MB 제한
+  .min(1, '내용은 필수입니다')
+  .max(1024 * 1024, '내용은 1MB를 초과할 수 없습니다') // 1MB 제한
+  .refine(
+    (content) => !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g.test(content),
+    '제어 문자는 허용되지 않습니다'
+  )
+  .refine(
+    (content) => {
+      // 바이너리 데이터 패턴 감지
+      const binaryPattern = /[\x00-\x1F\x7F-\xFF]{10,}/g;
+      return !binaryPattern.test(content);
+    },
+    '의심스러운 바이너리 데이터가 감지되었습니다'
+  );
 
 export const TagSchema = z.array(z.string()
   .min(1, '태그는 비어있을 수 없습니다')
@@ -40,6 +53,14 @@ export const SearchQuerySchema = z.string()
   .refine(
     (query) => !validator.contains(query, '<script>'),
     'XSS 공격 패턴이 감지되었습니다'
+  )
+  .refine(
+    (query) => !/<[^>]*>/g.test(query),
+    'HTML 태그는 허용되지 않습니다'
+  )
+  .refine(
+    (query) => !/[<>'"&]/g.test(query),
+    '위험한 특수문자가 포함되어 있습니다'
   );
 
 export const VersionNumberSchema = z.number()
