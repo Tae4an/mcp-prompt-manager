@@ -44,7 +44,7 @@ import {
   createTemplateCache,
   CacheKeyGenerator 
 } from "./utils/cache.js";
-import { fuzzySearch } from "./utils/fuzzy-search.js";
+import { fuzzySearch, FuzzySearch } from "./utils/fuzzy-search.js";
 import { templateLibrary } from "./utils/template-library.js";
 import { createImportExportManager } from "./utils/import-export.js";
 
@@ -486,10 +486,10 @@ server.tool(
       }
 
       // 퍼지 검색 설정
-      const fuzzySearcher = new fuzzySearch.constructor({ 
-        threshold, 
-        caseSensitive: false, 
-        includeScore: true 
+      const fuzzySearcher = new FuzzySearch({
+        threshold,
+        caseSensitive: false,
+        includeScore: true
       });
 
       // 다중 필드 검색 수행
@@ -1080,7 +1080,7 @@ server.tool(
         return createErrorResponse(`Prompt "${filename}" does not exist.`);
       }
 
-      const comparison = await versionManager.compareVersions(filename, fromVersion, toVersion);
+      const comparison = await versionManager.compareVersionsDetailed(filename, fromVersion, toVersion);
       
       let result = `Comparison: ${filename} v${fromVersion} → v${toVersion}\n\n`;
       result += `Summary:\n`;

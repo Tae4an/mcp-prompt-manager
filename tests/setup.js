@@ -1,8 +1,9 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-// 테스트용 임시 디렉토리 설정
-const TEST_PROMPTS_DIR = path.join(process.cwd(), 'tests', 'temp_prompts');
+// 테스트용 임시 디렉토리 설정 (워커별 격리)
+const WORKER_ID = process.env.JEST_WORKER_ID || '0';
+const TEST_PROMPTS_DIR = path.join(process.cwd(), 'tests', 'temp_prompts', `w${WORKER_ID}`);
 
 // 각 테스트 전에 임시 디렉토리 정리
 beforeEach(async () => {
@@ -23,5 +24,5 @@ afterAll(async () => {
   }
 });
 
-// 환경 변수 설정
+// 환경 변수 설정 (워커별 디렉토리 사용)
 process.env.PROMPTS_DIR = TEST_PROMPTS_DIR;

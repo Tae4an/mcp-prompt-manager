@@ -90,6 +90,32 @@ export class VersionManager {
     return patch;
   }
 
+  /**
+   * 상세 비교 정보 반환 (기존 compareVersions 호환 유지용 별도 메서드)
+   */
+  async compareVersionsDetailed(filename, fromVersion, toVersion) {
+    const history = await this.loadVersionHistory(filename);
+    const fromVer = history.find(v => v.version === fromVersion);
+    const toVer = history.find(v => v.version === toVersion);
+    
+    if (!fromVer || !toVer) {
+      throw new Error('지정된 버전을 찾을 수 없습니다.');
+    }
+
+    const diff = createTwoFilesPatch(
+      `${filename} (v${fromVersion})`,
+      `${filename} (v${toVersion})`,
+      fromVer.content,
+      toVer.content,
+      '',
+      '',
+      { context: 3 }
+    );
+
+    const summary = this.generateDiffSummary(fromVer.content, toVer.content);
+    return { diff, summary };
+  }
+
   async rollback(filename, targetVersion) {
     return await this.rollbackToVersion(filename, targetVersion);
   }
@@ -176,7 +202,9 @@ export class VersionManager {
         totalVersions: 0,
         firstVersion: null,
         lastVersion: null,
-        totalSizeHistory: []
+        totalSizeHistory: [],
+        sizeHistory: [],
+        actions: {}
       };
     }
 
@@ -190,6 +218,8 @@ export class VersionManager {
       totalVersions: history.length,
       firstVersion: history[0],
       lastVersion: history[history.length - 1],
+      // 서버 코드 호환을 위해 두 키 모두 제공
+      totalSizeHistory: sizeHistory,
       sizeHistory: sizeHistory,
       actions: history.reduce((acc, v) => {
         acc[v.action] = (acc[v.action] || 0) + 1;
