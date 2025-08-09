@@ -22,10 +22,13 @@ export class Logger {
     this.level = options.level || LogLevel.INFO;
     this.enableConsole = options.enableConsole !== false;
     this.enableFile = options.enableFile || false;
-    this.logDir = options.logDir || './logs';
+    this.logDir = options.logDir || process.env.LOG_DIR || './logs';
     this.maxFileSize = options.maxFileSize || 10 * 1024 * 1024; // 10MB
     this.maxFiles = options.maxFiles || 5;
-    this.format = options.format || 'json'; // 'json' or 'text'
+    this.format = options.format || process.env.LOG_FORMAT || 'json'; // 'json' or 'text'
+    this.redactKeys = new Set([
+      'password', 'pass', 'secret', 'token', 'accessToken', 'authorization', 'apiKey'
+    ]);
   }
 
   async init() {
@@ -49,7 +52,7 @@ export class Logger {
       level: level,
       message: message,
       pid: process.pid,
-      ...metadata
+      ...this.redactMetadata(metadata)
     };
   }
 
@@ -151,6 +154,19 @@ export class Logger {
     
     this.writeToConsole(entry);
     await this.writeToFile(entry);
+  }
+
+  redactMetadata(metadata) {
+    try {
+      const replacer = (key, value) => {
+        if (this.redactKeys.has(key)) return '[REDACTED]';
+        return value;
+      };
+      // 깊은 복사 + 레닥션
+      return JSON.parse(JSON.stringify(metadata, replacer));
+    } catch {
+      return metadata;
+    }
   }
 
   async error(message, metadata = {}) {
