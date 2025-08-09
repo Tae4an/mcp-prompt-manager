@@ -1,0 +1,20 @@
+version: "3.9"
+services:
+  mcp-prompt-manager:
+    build: .
+    image: mcp-prompt-manager:local
+    container_name: mcp-prompt-manager
+    environment:
+      - NODE_ENV=production
+      - LOG_DIR=/var/log/mcp
+      - PROMPTS_DIR=/data/prompts
+      - FILE_CACHE_TTL=600000
+      - SEARCH_CACHE_TTL=180000
+      - METADATA_CACHE_TTL=300000
+      - TEMPLATE_CACHE_TTL=900000
+      - RATE_LIMIT_STANDARD_WINDOW_MS=60000
+      - RATE_LIMIT_STANDARD_MAX=100
+    volumes:
+      - ./prompts:/data/prompts
+      - ./logs:/var/log/mcp
+    restart: unless-stopped
