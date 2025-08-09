@@ -114,6 +114,27 @@ function checkRateLimit(operation, clientId = 'default') {
   return result;
 }
 
+// 캐시 무효화 헬퍼
+function invalidateCaches({ filename = null, invalidateList = true, invalidateContent = true, invalidateMetadata = true, invalidateSearch = true } = {}) {
+  try {
+    if (invalidateList) {
+      caches.files.delete(CacheKeyGenerator.list());
+    }
+    if (filename && invalidateContent) {
+      caches.files.delete(CacheKeyGenerator.file(filename));
+    }
+    if (filename && invalidateMetadata) {
+      caches.metadata.delete(CacheKeyGenerator.metadata(filename));
+    }
+    if (invalidateSearch) {
+      caches.search.clear();
+    }
+    log.debug('Caches invalidated', { filename, invalidateList, invalidateContent, invalidateMetadata, invalidateSearch });
+  } catch (e) {
+    log.warn('Cache invalidation error', { error: e.message, filename });
+  }
+}
+
 // 프롬프트 목록 조회 도구 등록
 server.tool(
   "list-prompts",
@@ -293,9 +314,8 @@ server.tool(
       
       await timer.end({ operation: 'create-prompt', filename: sanitizedFilename });
       
-      // 캐시 무효화 (리스트 캐시 삭제)
-      caches.files.delete(CacheKeyGenerator.list());
-      log.debug('Cache invalidated after prompt creation');
+      // 캐시 무효화 일원화
+      invalidateCaches({ filename: sanitizedFilename });
       
       return toMcpSuccessResponse(result);
     } catch (error) {
@@ -351,6 +371,9 @@ server.tool(
       // 버전 히스토리에 저장
       const version = await versionManager.saveVersion(sanitizedFilename, sanitizedContent, "update");
       
+      // 캐시 무효화
+      invalidateCaches({ filename: sanitizedFilename });
+      
       return createSuccessResponse(`Successfully updated prompt: ${sanitizedFilename} (Version ${version.version})`);
     } catch (error) {
       return createErrorResponse(`Failed to update prompt ${filename}: ${error.message}`, error);
@@ -392,6 +415,9 @@ server.tool(
       
       // 버전 히스토리도 삭제
       await versionManager.deleteVersionHistory(filename);
+      
+      // 캐시 무효화
+      invalidateCaches({ filename, invalidateContent: true, invalidateMetadata: true });
       
       return createSuccessResponse(`Successfully deleted prompt: ${filename}`);
     } catch (error) {
@@ -667,6 +693,9 @@ server.tool(
 
       // 메타데이터 저장
       await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), "utf-8");
+      
+      // 캐시 무효화
+      invalidateCaches({ filename });
 
       return createSuccessResponse(`Successfully added tags [${tags.join(", ")}] to prompt: ${filename}`);
     } catch (error) {
@@ -710,6 +739,9 @@ server.tool(
 
       // 메타데이터 저장
       await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), "utf-8");
+      
+      // 캐시 무효화
+      invalidateCaches({ filename });
 
       return createSuccessResponse(`Successfully set category "${category}" for prompt: ${filename}`);
     } catch (error) {
@@ -1552,7 +1584,7 @@ server.tool(
       }
       
       // 캐시 무효화
-      caches.files.delete(CacheKeyGenerator.list());
+      invalidateCaches({ filename: sanitizedFilename });
       
       let result = `✅ 템플릿으로부터 프롬프트 생성 완료!\n\n`;
       result += `**파일명**: ${sanitizedFilename}\n`;
