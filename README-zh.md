@@ -53,6 +53,41 @@ MCP（模型上下文协议）提示词管理器是一个让 Claude 等 AI 模�
    chmod +x server.js
    ```
 
+## 容器化运行
+
+### 使用 Docker 运行
+
+```bash
+docker build -t mcp-prompt-manager:local .
+docker run --rm \
+  -e NODE_ENV=production \
+  -e LOG_DIR=/var/log/mcp \
+  -e PROMPTS_DIR=/data/prompts \
+  -v $(pwd)/prompts:/data/prompts \
+  -v $(pwd)/logs:/var/log/mcp \
+  mcp-prompt-manager:local
+```
+
+### 使用 Docker Compose 运行
+
+```bash
+docker compose up -d --build
+```
+
+### 环境变量
+- PROMPTS_DIR：提示词存储目录（默认：项目内 `prompts`）
+- LOG_DIR：文件日志目录（默认：`./logs`）
+- 缓存 TTL/大小：
+  - FILE_CACHE_TTL, FILE_CACHE_MAX_SIZE
+  - SEARCH_CACHE_TTL, SEARCH_CACHE_MAX_SIZE
+  - METADATA_CACHE_TTL, METADATA_CACHE_MAX_SIZE
+  - TEMPLATE_CACHE_TTL, TEMPLATE_CACHE_MAX_SIZE
+- 速率限制预设：
+  - RATE_LIMIT_STANDARD_WINDOW_MS, RATE_LIMIT_STANDARD_MAX
+  - RATE_LIMIT_STRICT_WINDOW_MS, RATE_LIMIT_STRICT_MAX
+  - RATE_LIMIT_LENIENT_WINDOW_MS, RATE_LIMIT_LENIENT_MAX
+  - RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_UPLOAD_MAX
+
 ## 连接到 Claude Desktop
 
 1. 安装 Claude Desktop（如果尚未安装）

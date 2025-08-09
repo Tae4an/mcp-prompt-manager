@@ -56,6 +56,41 @@ MCP (Model Context Protocol) Prompt Manager is a server that enables AI models l
    chmod +x server.js
    ```
 
+## Containerized Run
+
+### Run with Docker
+
+```bash
+docker build -t mcp-prompt-manager:local .
+docker run --rm \
+  -e NODE_ENV=production \
+  -e LOG_DIR=/var/log/mcp \
+  -e PROMPTS_DIR=/data/prompts \
+  -v $(pwd)/prompts:/data/prompts \
+  -v $(pwd)/logs:/var/log/mcp \
+  mcp-prompt-manager:local
+```
+
+### Run with Docker Compose
+
+```bash
+docker compose up -d --build
+```
+
+### Environment variables
+- PROMPTS_DIR: Directory to store prompts (default: project `prompts`)
+- LOG_DIR: Directory for file logging (default: `./logs`)
+- Cache TTL/size:
+  - FILE_CACHE_TTL, FILE_CACHE_MAX_SIZE
+  - SEARCH_CACHE_TTL, SEARCH_CACHE_MAX_SIZE
+  - METADATA_CACHE_TTL, METADATA_CACHE_MAX_SIZE
+  - TEMPLATE_CACHE_TTL, TEMPLATE_CACHE_MAX_SIZE
+- Rate limit presets:
+  - RATE_LIMIT_STANDARD_WINDOW_MS, RATE_LIMIT_STANDARD_MAX
+  - RATE_LIMIT_STRICT_WINDOW_MS, RATE_LIMIT_STRICT_MAX
+  - RATE_LIMIT_LENIENT_WINDOW_MS, RATE_LIMIT_LENIENT_MAX
+  - RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_UPLOAD_MAX
+
 ## Connecting to Claude Desktop
 
 1. Install Claude Desktop (if not already installed)

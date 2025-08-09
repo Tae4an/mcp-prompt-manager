@@ -493,3 +493,38 @@ PROMPTS_DIR=/원하는/경로 node server.js
 - [English](README.md)
 - [日本語](README-ja.md)  
 - [中文](README-zh.md)
+
+## 컨테이너 실행
+
+### Docker로 실행
+
+```bash
+docker build -t mcp-prompt-manager:local .
+docker run --rm \
+  -e NODE_ENV=production \
+  -e LOG_DIR=/var/log/mcp \
+  -e PROMPTS_DIR=/data/prompts \
+  -v $(pwd)/prompts:/data/prompts \
+  -v $(pwd)/logs:/var/log/mcp \
+  mcp-prompt-manager:local
+```
+
+### docker-compose로 실행
+
+```bash
+docker compose up -d --build
+```
+
+### 환경 변수
+- **PROMPTS_DIR**: 프롬프트 저장 디렉토리 (기본: 프로젝트 내 `prompts`)
+- **LOG_DIR**: 파일 로깅 디렉토리 (기본: `./logs`)
+- **캐시 TTL/크기**:
+  - `FILE_CACHE_TTL`, `FILE_CACHE_MAX_SIZE`
+  - `SEARCH_CACHE_TTL`, `SEARCH_CACHE_MAX_SIZE`
+  - `METADATA_CACHE_TTL`, `METADATA_CACHE_MAX_SIZE`
+  - `TEMPLATE_CACHE_TTL`, `TEMPLATE_CACHE_MAX_SIZE`
+- **레이트리밋 프리셋**:
+  - `RATE_LIMIT_STANDARD_WINDOW_MS`, `RATE_LIMIT_STANDARD_MAX`
+  - `RATE_LIMIT_STRICT_WINDOW_MS`, `RATE_LIMIT_STRICT_MAX`
+  - `RATE_LIMIT_LENIENT_WINDOW_MS`, `RATE_LIMIT_LENIENT_MAX`
+  - `RATE_LIMIT_UPLOAD_WINDOW_MS`, `RATE_LIMIT_UPLOAD_MAX`

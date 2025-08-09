@@ -53,6 +53,41 @@ MCP（Model Context Protocol）プロンプトマネージャーは、Claudeの�
    chmod +x server.js
    ```
 
+## コンテナでの実行
+
+### Dockerで実行
+
+```bash
+docker build -t mcp-prompt-manager:local .
+docker run --rm \
+  -e NODE_ENV=production \
+  -e LOG_DIR=/var/log/mcp \
+  -e PROMPTS_DIR=/data/prompts \
+  -v $(pwd)/prompts:/data/prompts \
+  -v $(pwd)/logs:/var/log/mcp \
+  mcp-prompt-manager:local
+```
+
+### docker-composeで実行
+
+```bash
+docker compose up -d --build
+```
+
+### 環境変数
+- PROMPTS_DIR: プロンプト保存ディレクトリ（既定: プロジェクト内 `prompts`）
+- LOG_DIR: ファイルロギング出力先（既定: `./logs`）
+- キャッシュ TTL/サイズ:
+  - FILE_CACHE_TTL, FILE_CACHE_MAX_SIZE
+  - SEARCH_CACHE_TTL, SEARCH_CACHE_MAX_SIZE
+  - METADATA_CACHE_TTL, METADATA_CACHE_MAX_SIZE
+  - TEMPLATE_CACHE_TTL, TEMPLATE_CACHE_MAX_SIZE
+- レート制限プリセット:
+  - RATE_LIMIT_STANDARD_WINDOW_MS, RATE_LIMIT_STANDARD_MAX
+  - RATE_LIMIT_STRICT_WINDOW_MS, RATE_LIMIT_STRICT_MAX
+  - RATE_LIMIT_LENIENT_WINDOW_MS, RATE_LIMIT_LENIENT_MAX
+  - RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_UPLOAD_MAX
+
 ## Claude Desktopとの接続
 
 1. Claude Desktopのインストール（まだインストールしていない場合）
