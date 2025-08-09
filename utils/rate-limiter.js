@@ -6,8 +6,8 @@ import { log } from "./logger.js";
  */
 export class RateLimiter {
   constructor(options = {}) {
-    this.windowMs = options.windowMs || 60000; // 1분 기본값
-    this.max = options.max || 100; // 요청 제한 개수
+    this.windowMs = options.windowMs || envInt('RATE_LIMIT_WINDOW_MS', 60000); // 1분 기본값
+    this.max = options.max || envInt('RATE_LIMIT_MAX', 100); // 요청 제한 개수
     this.message = options.message || "Too many requests, please try again later";
     this.skipSuccessfulRequests = options.skipSuccessfulRequests || false;
     this.skipFailedRequests = options.skipFailedRequests || false;
@@ -215,31 +215,42 @@ export function createRateLimitMiddleware(options = {}) {
 export const rateLimitPresets = {
   // 엄격한 제한 (개발/테스트 환경)
   strict: {
-    windowMs: 60000,    // 1분
-    max: 10,            // 10 요청
+    windowMs: envInt('RATE_LIMIT_STRICT_WINDOW_MS', 60000),    // 1분
+    max: envInt('RATE_LIMIT_STRICT_MAX', 10),            // 10 요청
     message: "요청이 너무 많습니다. 1분 후 다시 시도해주세요."
   },
   
   // 일반적인 제한 (프로덕션 환경)
   standard: {
-    windowMs: 60000,    // 1분  
-    max: 100,           // 100 요청
+    windowMs: envInt('RATE_LIMIT_STANDARD_WINDOW_MS', 60000),    // 1분  
+    max: envInt('RATE_LIMIT_STANDARD_MAX', 100),           // 100 요청
     message: "요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요."
   },
   
   // 관대한 제한 (내부 API)
   lenient: {
-    windowMs: 60000,    // 1분
-    max: 500,           // 500 요청
+    windowMs: envInt('RATE_LIMIT_LENIENT_WINDOW_MS', 60000),    // 1분
+    max: envInt('RATE_LIMIT_LENIENT_MAX', 500),           // 500 요청
     message: "서버 부하가 높습니다. 잠시 후 다시 시도해주세요."
   },
   
   // 파일 업로드용 제한
   upload: {
-    windowMs: 300000,   // 5분
-    max: 5,             // 5 요청
+    windowMs: envInt('RATE_LIMIT_UPLOAD_WINDOW_MS', 300000),   // 5분
+    max: envInt('RATE_LIMIT_UPLOAD_MAX', 5),             // 5 요청
     message: "파일 업로드 요청이 너무 많습니다. 5분 후 다시 시도해주세요."
   }
 };
 
 export default RateLimiter;
+
+/**
+ * 환경변수 정수 파서 (안전 기본값)
+ */
+function envInt(key, defaultValue) {
+  const raw = process.env[key];
+  if (!raw) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) return defaultValue;
+  return parsed;
+}

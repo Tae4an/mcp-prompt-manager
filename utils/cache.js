@@ -358,32 +358,32 @@ export class MemoryCache {
  */
 export function createFileCache(options = {}) {
   return new MemoryCache({
-    maxSize: 500,
-    defaultTTL: 600000, // 10분
+    maxSize: envInt('FILE_CACHE_MAX_SIZE', 500),
+    defaultTTL: envInt('FILE_CACHE_TTL', 600000), // 10분
     ...options
   });
 }
 
 export function createMetadataCache(options = {}) {
   return new MemoryCache({
-    maxSize: 1000,
-    defaultTTL: 300000, // 5분
+    maxSize: envInt('METADATA_CACHE_MAX_SIZE', 1000),
+    defaultTTL: envInt('METADATA_CACHE_TTL', 300000), // 5분
     ...options
   });
 }
 
 export function createSearchCache(options = {}) {
   return new MemoryCache({
-    maxSize: 200,
-    defaultTTL: 180000, // 3분
+    maxSize: envInt('SEARCH_CACHE_MAX_SIZE', 200),
+    defaultTTL: envInt('SEARCH_CACHE_TTL', 180000), // 3분
     ...options
   });
 }
 
 export function createTemplateCache(options = {}) {
   return new MemoryCache({
-    maxSize: 100,
-    defaultTTL: 900000, // 15분
+    maxSize: envInt('TEMPLATE_CACHE_MAX_SIZE', 100),
+    defaultTTL: envInt('TEMPLATE_CACHE_TTL', 900000), // 15분
     ...options
   });
 }
@@ -417,6 +417,17 @@ export class CacheKeyGenerator {
   static list(directory = '') {
     return `list:${directory}`;
   }
+}
+
+/**
+ * 환경변수 정수 파서 (안전 기본값)
+ */
+function envInt(key, defaultValue) {
+  const raw = process.env[key];
+  if (!raw) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) return defaultValue;
+  return parsed;
 }
 
 export default MemoryCache;
