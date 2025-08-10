@@ -135,6 +135,36 @@ function invalidateCaches({ filename = null, invalidateList = true, invalidateCo
   }
 }
 
+// 정책/권한 헬퍼
+function envBool(key, defaultValue = false) {
+  const raw = process.env[key];
+  if (raw == null) return defaultValue;
+  const normalized = String(raw).toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function enforcePolicy(operation) {
+  // 읽기 전용 모드: 쓰기성 작업 차단
+  const readOnly = envBool('READ_ONLY', false);
+  const writeOps = new Set(['create', 'update', 'delete', 'tag', 'categorize', 'create_from_template']);
+  if (readOnly && writeOps.has(operation)) {
+    throw new PermissionError(operation, 'policy');
+  }
+
+  // 임포트/익스포트 개별 제어
+  if (operation === 'import' && envBool('DISABLE_IMPORT', false)) {
+    throw new PermissionError('import', 'policy');
+  }
+  if (operation === 'export' && envBool('DISABLE_EXPORT', false)) {
+    throw new PermissionError('export', 'policy');
+  }
+
+  // 롤백 금지 옵션
+  if (operation === 'rollback' && envBool('DISABLE_VERSION_ROLLBACK', false)) {
+    throw new PermissionError('rollback', 'policy');
+  }
+}
+
 // 프롬프트 목록 조회 도구 등록
 server.tool(
   "list-prompts",
@@ -237,6 +267,7 @@ server.tool(
     try {
       // Rate limiting 적용 (업로드 타입 제한)
       checkRateLimit('create-prompt');
+      enforcePolicy('create');
       
       // 고급 입력 검증 및 정제
       const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
@@ -336,6 +367,7 @@ server.tool(
     try {
       // Rate limiting 적용
       checkRateLimit('update-prompt');
+      enforcePolicy('update');
       
       // 입력 검증
       const filenameValidation = validateFilename(filename);
@@ -392,6 +424,7 @@ server.tool(
     try {
       // Rate limiting 적용
       checkRateLimit('delete-prompt');
+      enforcePolicy('delete');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
       
@@ -666,6 +699,7 @@ server.tool(
   },
   async ({ filename, tags }) => {
     try {
+      enforcePolicy('tag');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
       
@@ -714,6 +748,7 @@ server.tool(
   },
   async ({ filename, category }) => {
     try {
+      enforcePolicy('categorize');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
       
@@ -1143,6 +1178,7 @@ server.tool(
   },
   async ({ filename, version }) => {
     try {
+      enforcePolicy('rollback');
       const filePath = path.join(PROMPTS_DIR, filename);
       
       // 파일 존재 여부 확인
@@ -1526,6 +1562,7 @@ server.tool(
   async ({ templateId, filename, variables, addMetadata = true }) => {
     try {
       checkRateLimit('create-prompt-from-template');
+      enforcePolicy('create_from_template');
       
       // 템플릿 렌더링
       const renderResult = templateLibrary.renderTemplate(templateId, variables);
@@ -1632,6 +1669,7 @@ server.tool(
   async ({ format = "json", includeMetadata = true, includeVersionHistory = false, filterByTags = [], filterByCategory, compress = false }) => {
     try {
       checkRateLimit('export-prompts');
+      enforcePolicy('export');
       
       log.info('Starting prompt export', { 
         format, 
@@ -1725,6 +1763,7 @@ server.tool(
   async ({ importData, overwriteExisting = false, skipDuplicates = true, validateChecksums = true, createBackup = true, mergeMetadata = true }) => {
     try {
       checkRateLimit('import-prompts');
+      enforcePolicy('import');
       
       log.info('Starting prompt import', { 
         promptCount: importData.prompts?.length || 0,
