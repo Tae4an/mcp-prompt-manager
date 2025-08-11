@@ -87,6 +87,25 @@ docker compose up -d --build
   - RATE_LIMIT_STRICT_WINDOW_MS, RATE_LIMIT_STRICT_MAX
   - RATE_LIMIT_LENIENT_WINDOW_MS, RATE_LIMIT_LENIENT_MAX
   - RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_UPLOAD_MAX
+ - 策略/权限控制：
+   - READ_ONLY (true/false)：禁用写操作
+   - DISABLE_IMPORT (true/false)：禁用导入
+   - DISABLE_EXPORT (true/false)：禁用导出
+   - DISABLE_VERSION_ROLLBACK (true/false)：禁用回滚
+
+## 运维工具
+
+### get-policy-status
+获取基于环境变量的策略/权限标志
+- 参数：无
+
+### get-cache-stats
+读取文件/元数据/搜索/模板缓存统计（size、hit/miss、内存）
+- 参数：无
+
+### get-rate-limit-status
+获取 standard/strict/upload 速率限制器状态
+- 参数：无
 
 ## 连接到 Claude Desktop
 

@@ -528,3 +528,22 @@ docker compose up -d --build
   - `RATE_LIMIT_STRICT_WINDOW_MS`, `RATE_LIMIT_STRICT_MAX`
   - `RATE_LIMIT_LENIENT_WINDOW_MS`, `RATE_LIMIT_LENIENT_MAX`
   - `RATE_LIMIT_UPLOAD_WINDOW_MS`, `RATE_LIMIT_UPLOAD_MAX`
+ - **정책/권한 제어**:
+   - `READ_ONLY` (true/false): 쓰기 작업 차단
+   - `DISABLE_IMPORT` (true/false): 임포트 차단
+   - `DISABLE_EXPORT` (true/false): 익스포트 차단
+   - `DISABLE_VERSION_ROLLBACK` (true/false): 롤백 차단
+
+## 운영 도구
+
+### get-policy-status
+환경변수에서 파생된 정책/권한 플래그 조회
+- 매개변수: 없음
+
+### get-cache-stats
+파일/메타/검색/템플릿 캐시 통계 조회(size, hit/miss, 메모리)
+- 매개변수: 없음
+
+### get-rate-limit-status
+standard/strict/upload 레이트리미터 상태 조회
+- 매개변수: 없음

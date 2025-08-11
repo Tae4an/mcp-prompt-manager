@@ -90,6 +90,11 @@ docker compose up -d --build
   - RATE_LIMIT_STRICT_WINDOW_MS, RATE_LIMIT_STRICT_MAX
   - RATE_LIMIT_LENIENT_WINDOW_MS, RATE_LIMIT_LENIENT_MAX
   - RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_UPLOAD_MAX
+ - Policy/permissions:
+   - READ_ONLY (true/false): disable write operations
+   - DISABLE_IMPORT (true/false): block import
+   - DISABLE_EXPORT (true/false): block export
+   - DISABLE_VERSION_ROLLBACK (true/false): block rollback
 
 ## Connecting to Claude Desktop
 
@@ -328,6 +333,20 @@ Import prompts from JSON format with validation and conflict resolution.
 
 ### get-import-export-status
 Get import/export system status and capabilities.
+- Parameters: None
+
+## Operations/Monitoring Tools
+
+### get-policy-status
+Get current policy/permission flags derived from environment variables.
+- Parameters: None
+
+### get-cache-stats
+Read cache statistics for files/metadata/search/templates (size, hit/miss, memory usage).
+- Parameters: None
+
+### get-rate-limit-status
+Get current rate limiter stats for standard/strict/upload presets.
 - Parameters: None
 
 ## Technical Features

@@ -87,6 +87,25 @@ docker compose up -d --build
   - RATE_LIMIT_STRICT_WINDOW_MS, RATE_LIMIT_STRICT_MAX
   - RATE_LIMIT_LENIENT_WINDOW_MS, RATE_LIMIT_LENIENT_MAX
   - RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_UPLOAD_MAX
+ - ポリシー/権限制御:
+   - READ_ONLY (true/false): 書き込み操作を禁止
+   - DISABLE_IMPORT (true/false): インポート禁止
+   - DISABLE_EXPORT (true/false): エクスポート禁止
+   - DISABLE_VERSION_ROLLBACK (true/false): ロールバック禁止
+
+## 運用ツール
+
+### get-policy-status
+環境変数に基づくポリシー/権限フラグの取得
+- パラメータ: なし
+
+### get-cache-stats
+ファイル/メタ/検索/テンプレート キャッシュ統計の取得（size, hit/miss, メモリ）
+- パラメータ: なし
+
+### get-rate-limit-status
+standard/strict/upload レートリミッター状態の取得
+- パラメータ: なし
 
 ## Claude Desktopとの接続
 
