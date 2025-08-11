@@ -1848,12 +1848,24 @@ server.tool(
       checkRateLimit('get-import-export-status');
       
       const status = await importExportManager.getImportExportStatus();
+      const policy = {
+        readOnly: envBool('READ_ONLY', false),
+        disableImport: envBool('DISABLE_IMPORT', false),
+        disableExport: envBool('DISABLE_EXPORT', false),
+        disableVersionRollback: envBool('DISABLE_VERSION_ROLLBACK', false)
+      };
       
       let result = `📊 가져오기/내보내기 시스템 상태\n\n`;
       result += `**현재 프롬프트**: ${status.totalPrompts}개\n`;
       result += `**메타데이터 지원**: ${status.hasMetadata ? '✅' : '❌'}\n`;
       result += `**백업 개수**: ${status.backupCount}개\n`;
       result += `**최대 파일 크기**: ${status.maxFileSize}\n\n`;
+      
+      result += `**정책 상태**:\n`;
+      result += `- 읽기 전용(READ_ONLY): ${policy.readOnly ? 'ON' : 'OFF'}\n`;
+      result += `- 임포트 금지(DISABLE_IMPORT): ${policy.disableImport ? 'ON' : 'OFF'}\n`;
+      result += `- 익스포트 금지(DISABLE_EXPORT): ${policy.disableExport ? 'ON' : 'OFF'}\n`;
+      result += `- 롤백 금지(DISABLE_VERSION_ROLLBACK): ${policy.disableVersionRollback ? 'ON' : 'OFF'}\n\n`;
       
       if (status.lastBackup) {
         result += `**최근 백업**:\n`;
@@ -1883,6 +1895,88 @@ server.tool(
     } catch (error) {
       log.error('Failed to get import/export status', { error: error.message });
       return createErrorResponse(`상태 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 정책 상태 조회 도구 등록
+server.tool(
+  "get-policy-status",
+  "Get current policy/permission flags",
+  {},
+  async () => {
+    try {
+      checkRateLimit('get-policy-status');
+      const flags = {
+        READ_ONLY: envBool('READ_ONLY', false),
+        DISABLE_IMPORT: envBool('DISABLE_IMPORT', false),
+        DISABLE_EXPORT: envBool('DISABLE_EXPORT', false),
+        DISABLE_VERSION_ROLLBACK: envBool('DISABLE_VERSION_ROLLBACK', false)
+      };
+      let result = `🔐 정책/권한 상태\n\n`;
+      Object.entries(flags).forEach(([k, v]) => {
+        result += `- ${k}: ${v ? 'ON' : 'OFF'}\n`;
+      });
+      return createSuccessResponse(result);
+    } catch (error) {
+      return createErrorResponse(`정책 상태 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 캐시 상태 조회 도구 등록
+server.tool(
+  "get-cache-stats",
+  "Read cache statistics for files/metadata/search/templates",
+  {},
+  async () => {
+    try {
+      checkRateLimit('get-cache-stats');
+      const stats = {
+        files: caches.files.getStats(),
+        metadata: caches.metadata.getStats(),
+        search: caches.search.getStats(),
+        templates: caches.templates.getStats()
+      };
+      let result = `캐시 통계\n\n`;
+      Object.entries(stats).forEach(([name, s]) => {
+        result += `■ ${name}\n`;
+        result += `- size: ${s.size}/${s.maxSize}\n`;
+        result += `- hitRate: ${s.hitRate}\n`;
+        result += `- hits/misses/sets/del: ${s.hits}/${s.misses}/${s.sets}/${s.deletes}\n`;
+        result += `- evictions/cleanups: ${s.evictions}/${s.cleanups}\n`;
+        result += `- memory: ${s.memoryUsage.mb} MB\n\n`;
+      });
+      return createSuccessResponse(result.trim());
+    } catch (error) {
+      return createErrorResponse(`캐시 통계 조회 실패: ${error.message}`, error);
+    }
+  }
+);
+
+// 레이트 리미터 상태 조회 도구 등록
+server.tool(
+  "get-rate-limit-status",
+  "Get current rate limiter stats (standard/strict/upload)",
+  {},
+  async () => {
+    try {
+      checkRateLimit('get-rate-limit-status');
+      const status = {
+        standard: rateLimiters.standard.getStats(),
+        strict: rateLimiters.strict.getStats(),
+        upload: rateLimiters.upload.getStats()
+      };
+      let result = `레이트 리미터 상태\n\n`;
+      Object.entries(status).forEach(([name, s]) => {
+        result += `■ ${name}\n`;
+        result += `- windowMs/max: ${s.windowMs}/${s.maxRequests}\n`;
+        result += `- totalClients: ${s.totalClients}\n`;
+        result += `- activeClients(sample): ${Math.min(s.activeClients?.length || 0, 5)} 보여줌\n\n`;
+      });
+      return createSuccessResponse(result.trim());
+    } catch (error) {
+      return createErrorResponse(`레이트 리미터 상태 조회 실패: ${error.message}`, error);
     }
   }
 );
