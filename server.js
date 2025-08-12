@@ -86,6 +86,9 @@ const server = new McpServer({
   },
 });
 
+// 서버 시작 시간 기록
+const SERVER_START_TIME = Date.now();
+
 // 프롬프트 디렉토리 확인 및 생성
 async function ensurePromptsDir() {
   try {
@@ -213,6 +216,50 @@ server.tool(
       return createSuccessResponse(`Available prompts:\n\n${promptsList}`);
     } catch (error) {
       return createErrorResponse(`Failed to list prompts: ${error.message}`, error);
+    }
+  }
+);
+
+// 서버 상태 조회 도구 등록
+server.tool(
+  "get-server-stats",
+  "Get process and server runtime stats",
+  {},
+  async () => {
+    try {
+      checkRateLimit('get-server-stats');
+      const mem = process.memoryUsage();
+      const uptimeMs = Date.now() - SERVER_START_TIME;
+      const fmtMb = (b) => (b / 1024 / 1024).toFixed(2) + ' MB';
+      const policy = {
+        READ_ONLY: envBool('READ_ONLY', false),
+        DISABLE_IMPORT: envBool('DISABLE_IMPORT', false),
+        DISABLE_EXPORT: envBool('DISABLE_EXPORT', false),
+        DISABLE_VERSION_ROLLBACK: envBool('DISABLE_VERSION_ROLLBACK', false)
+      };
+      const cachesInfo = {
+        files: caches.files.getInfo(),
+        metadata: caches.metadata.getInfo(),
+        search: caches.search.getInfo(),
+        templates: caches.templates.getInfo()
+      };
+      let result = `서버 상태\n\n`;
+      result += `- version: 1.0.0\n`;
+      result += `- node: ${process.version}\n`;
+      result += `- pid: ${process.pid}\n`;
+      result += `- promptsDir: ${PROMPTS_DIR}\n`;
+      result += `- uptime: ${(uptimeMs/1000).toFixed(0)} sec\n\n`;
+      result += `메모리 사용량\n`;
+      result += `- rss: ${fmtMb(mem.rss)} / heapUsed: ${fmtMb(mem.heapUsed)} / external: ${fmtMb(mem.external)}\n\n`;
+      result += `정책\n`;
+      Object.entries(policy).forEach(([k,v])=>{ result += `- ${k}: ${v ? 'ON' : 'OFF'}\n`; });
+      result += `\n캐시 정보\n`;
+      Object.entries(cachesInfo).forEach(([name, info])=>{
+        result += `■ ${name} (size: ${info.size}/${info.maxSize}, ttl: ${info.defaultTTL}ms)\n`;
+      });
+      return createSuccessResponse(result.trim());
+    } catch (error) {
+      return createErrorResponse(`서버 상태 조회 실패: ${error.message}`, error);
     }
   }
 );
@@ -2068,17 +2115,26 @@ async function main() {
 }
 
 // 프로세스 종료 시 정리
-process.on('SIGINT', async () => {
-  log.info('Received SIGINT, shutting down gracefully');
-  const stats = globalErrorTracker.getStats();
-  log.info('Server shutdown stats', stats);
-  process.exit(0);
-});
+async function gracefulShutdown(signal) {
+  try {
+    log.info(`Received ${signal}, shutting down gracefully`);
+    // 리미터/캐시 정리
+    try { rateLimiters.standard.destroy(); } catch {}
+    try { rateLimiters.strict.destroy(); } catch {}
+    try { rateLimiters.upload.destroy(); } catch {}
+    try { caches.files.destroy(); } catch {}
+    try { caches.metadata.destroy(); } catch {}
+    try { caches.search.destroy(); } catch {}
+    try { caches.templates.destroy(); } catch {}
+    const stats = globalErrorTracker.getStats();
+    log.info('Server shutdown stats', stats);
+  } finally {
+    process.exit(0);
+  }
+}
 
-process.on('SIGTERM', async () => {
-  log.info('Received SIGTERM, shutting down gracefully');
-  process.exit(0);
-});
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // 서버 실행
 main().catch((error) => {
