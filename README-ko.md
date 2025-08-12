@@ -536,6 +536,10 @@ docker compose up -d --build
 
 ## 운영 도구
 
+### get-server-stats
+프로세스/서버 런타임 상태 조회(업타임, 메모리, 정책 플래그, 캐시 요약)
+- 매개변수: 없음
+
 ### get-policy-status
 환경변수에서 파생된 정책/권한 플래그 조회
 - 매개변수: 없음

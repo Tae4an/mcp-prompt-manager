@@ -95,6 +95,10 @@ docker compose up -d --build
 
 ## 运维工具
 
+### get-server-stats
+获取进程/服务器运行时状态（运行时长、内存、策略标志、缓存信息）
+- 参数：无
+
 ### get-policy-status
 获取基于环境变量的策略/权限标志
 - 参数：无

@@ -337,6 +337,10 @@ Get import/export system status and capabilities.
 
 ## Operations/Monitoring Tools
 
+### get-server-stats
+Get process/server runtime stats (uptime, memory, policy flags, cache info).
+- Parameters: None
+
 ### get-policy-status
 Get current policy/permission flags derived from environment variables.
 - Parameters: None
