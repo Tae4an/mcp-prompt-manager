@@ -42,7 +42,7 @@ import {
   createMetadataCache, 
   createSearchCache, 
   createTemplateCache,
-  CacheKeyGenerator 
+  ServerCacheKeyGenerator as CacheKeyGenerator 
 } from "./utils/cache.js";
 import { fuzzySearch, FuzzySearch } from "./utils/fuzzy-search.js";
 import { templateLibrary } from "./utils/template-library.js";
