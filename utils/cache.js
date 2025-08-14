@@ -680,6 +680,79 @@ export function createOptimizedTemplateCache(options = {}) {
 }
 
 /**
+ * 향상된 캐시 시스템 팩터리 (새로운 기능)
+ * 환경변수 ENABLE_ENHANCED_CACHE=true 설정 시 활성화
+ */
+export async function createEnhancedFileCache(options = {}) {
+  if (process.env.ENABLE_ENHANCED_CACHE === 'true') {
+    try {
+      const { EnhancedCacheFactory } = await import('./enhanced-cache-system.js');
+      return EnhancedCacheFactory.createCache('files', 'hotPrompts', {
+        maxSize: envInt('FILE_CACHE_MAX_SIZE', 500),
+        defaultTTL: envInt('FILE_CACHE_TTL', 600000),
+        ...options
+      });
+    } catch (error) {
+      log.warn('Enhanced cache system not available, falling back to optimized cache', { error: error.message });
+    }
+  }
+  
+  // 폴백: 기존 최적화된 캐시 사용
+  return createOptimizedFileCache(options);
+}
+
+export async function createEnhancedMetadataCache(options = {}) {
+  if (process.env.ENABLE_ENHANCED_CACHE === 'true') {
+    try {
+      const { EnhancedCacheFactory } = await import('./enhanced-cache-system.js');
+      return EnhancedCacheFactory.createCache('metadata', 'metadata', {
+        maxSize: envInt('METADATA_CACHE_MAX_SIZE', 1000),
+        defaultTTL: envInt('METADATA_CACHE_TTL', 300000),
+        ...options
+      });
+    } catch (error) {
+      log.warn('Enhanced cache system not available, falling back to optimized cache', { error: error.message });
+    }
+  }
+  
+  return createOptimizedMetadataCache(options);
+}
+
+export async function createEnhancedSearchCache(options = {}) {
+  if (process.env.ENABLE_ENHANCED_CACHE === 'true') {
+    try {
+      const { EnhancedCacheFactory } = await import('./enhanced-cache-system.js');
+      return EnhancedCacheFactory.createCache('search', 'searchResults', {
+        maxSize: envInt('SEARCH_CACHE_MAX_SIZE', 200),
+        defaultTTL: envInt('SEARCH_CACHE_TTL', 180000),
+        ...options
+      });
+    } catch (error) {
+      log.warn('Enhanced cache system not available, falling back to optimized cache', { error: error.message });
+    }
+  }
+  
+  return createOptimizedSearchCache(options);
+}
+
+export async function createEnhancedTemplateCache(options = {}) {
+  if (process.env.ENABLE_ENHANCED_CACHE === 'true') {
+    try {
+      const { EnhancedCacheFactory } = await import('./enhanced-cache-system.js');
+      return EnhancedCacheFactory.createCache('templates', 'templates', {
+        maxSize: envInt('TEMPLATE_CACHE_MAX_SIZE', 100),
+        defaultTTL: envInt('TEMPLATE_CACHE_TTL', 900000),
+        ...options
+      });
+    } catch (error) {
+      log.warn('Enhanced cache system not available, falling back to optimized cache', { error: error.message });
+    }
+  }
+  
+  return createOptimizedTemplateCache(options);
+}
+
+/**
  * 기존 캐시 API와의 호환성을 위한 래퍼 함수들
  */
 export function createFileCache(options = {}) {
