@@ -45,6 +45,7 @@ import {
   ServerCacheKeyGenerator as CacheKeyGenerator 
 } from "./utils/cache.js";
 import { fuzzySearch, FuzzySearch } from "./utils/fuzzy-search.js";
+import { OptimizedSearchEngine } from "./utils/optimized-search-engine.js";
 import { templateLibrary } from "./utils/template-library.js";
 import { createImportExportManager } from "./utils/import-export.js";
 
@@ -76,6 +77,15 @@ const caches = {
 // Import/Export 관리자 인스턴스 생성
 const importExportManager = createImportExportManager(PROMPTS_DIR);
 
+// 최적화된 검색 엔진 인스턴스 생성
+const optimizedSearchEngine = new OptimizedSearchEngine({
+  threshold: parseFloat(process.env.SEARCH_THRESHOLD) || 0.3,
+  parallelWorkers: parseInt(process.env.SEARCH_PARALLEL_WORKERS) || 4,
+  enableIndexing: process.env.SEARCH_ENABLE_INDEXING !== 'false',
+  enableMemoryPool: process.env.SEARCH_ENABLE_MEMORY_POOL !== 'false',
+  maxResults: 50
+});
+
 // 서버 인스턴스 생성
 const server = new McpServer({
   name: "prompt-manager",
@@ -88,6 +98,171 @@ const server = new McpServer({
 
 // 서버 시작 시간 기록
 const SERVER_START_TIME = Date.now();
+
+// 검색 데이터 로딩 헬퍼 함수
+async function loadSearchItems(promptFiles, searchInContent, searchInMeta) {
+  const searchItems = [];
+  
+  // 병렬 파일 읽기로 성능 향상
+  const filePromises = promptFiles.map(async (filename) => {
+    const filePath = path.join(PROMPTS_DIR, filename);
+    const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
+    
+    try {
+      const stats = await fs.stat(filePath);
+      const item = {
+        name: filename,
+        size: stats.size,
+        modified: stats.mtime,
+        content: '',
+        metadata: { tags: [], category: '', description: '' }
+      };
+
+      // 병렬로 내용과 메타데이터 읽기
+      const promises = [];
+      
+      if (searchInContent) {
+        promises.push(
+          fs.readFile(filePath, "utf-8")
+            .then(content => { item.content = content; })
+            .catch(e => log.warn('Failed to read prompt content', { filename, error: e.message }))
+        );
+      }
+
+      if (searchInMeta) {
+        promises.push(
+          fs.readFile(metaPath, "utf-8")
+            .then(metaContent => { item.metadata = JSON.parse(metaContent); })
+            .catch(() => {}) // 메타데이터가 없어도 계속 진행
+        );
+      }
+      
+      await Promise.all(promises);
+      return item;
+    } catch (e) {
+      log.warn('Failed to process prompt file', { filename, error: e.message });
+      return null;
+    }
+  });
+  
+  const items = await Promise.all(filePromises);
+  return items.filter(item => item !== null);
+}
+
+// 최적화된 검색 수행 함수
+async function performOptimizedSearch(query, promptFiles, options) {
+  const { searchInContent, searchInMeta, threshold, maxResults } = options;
+  
+  // 검색 데이터 로딩
+  const searchItems = await loadSearchItems(promptFiles, searchInContent, searchInMeta);
+  
+  if (searchItems.length === 0) {
+    return '검색할 프롬프트가 없습니다';
+  }
+  
+  // 인덱스가 비어있거나 데이터가 변경된 경우 재구축
+  const shouldRebuildIndex = optimizedSearchEngine.indexes.trigrams.size === 0 || 
+                            searchItems.length !== optimizedSearchEngine.lastIndexedCount;
+  
+  if (shouldRebuildIndex) {
+    optimizedSearchEngine.buildIndexes(searchItems);
+    optimizedSearchEngine.lastIndexedCount = searchItems.length;
+  }
+  
+  // 검색 필드 설정
+  const searchFields = {};
+  if (searchInContent) searchFields.content = query;
+  if (searchInMeta) {
+    searchFields['metadata.category'] = query;
+    searchFields['metadata.description'] = query;
+  }
+  searchFields.name = query; // 파일명은 항상 검색
+  
+  // 최적화된 병렬 검색 실행
+  const results = await optimizedSearchEngine.searchParallel(query, searchItems, searchFields);
+  
+  // 태그 검색 (배열 처리)
+  if (searchInMeta) {
+    const tagResults = [];
+    for (const item of searchItems) {
+      if (item.metadata.tags && Array.isArray(item.metadata.tags)) {
+        for (const tag of item.metadata.tags) {
+          if (tag.toLowerCase().includes(query.toLowerCase())) {
+            const score = query.toLowerCase() === tag.toLowerCase() ? 1.0 : 0.8;
+            if (score >= threshold) {
+              tagResults.push({
+                item,
+                score,
+                matchedField: 'tags',
+                matchedValue: tag
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // 태그 결과를 메인 결과와 병합
+    const resultMap = new Map(results.map(r => [r.item.name, r]));
+    
+    for (const tagResult of tagResults) {
+      const existing = resultMap.get(tagResult.item.name);
+      if (!existing || tagResult.score > existing.score) {
+        resultMap.set(tagResult.item.name, tagResult);
+      }
+    }
+    
+    results.length = 0;
+    results.push(...Array.from(resultMap.values()));
+    results.sort((a, b) => b.score - a.score);
+  }
+  
+  // 결과를 지정된 개수로 제한
+  const limitedResults = results.slice(0, maxResults);
+  
+  // 결과 포맷팅
+  return formatSearchResults(query, limitedResults, searchItems);
+}
+
+// 검색 결과 포맷팅 함수
+function formatSearchResults(query, results, allItems) {
+  if (results.length === 0) {
+    return `🔍 검색 결과: "${query}" (0개 발견)\n\n검색된 결과가 없습니다.`;
+  }
+
+  let resultText = `🔍 검색 결과: "${query}" (${results.length}개 발견)\n\n`;
+  
+  results.forEach((result, index) => {
+    const item = result.item;
+    const matchInfo = result.matchedField === 'tags' ? 
+      `태그: ${result.matchedValue}` : 
+      `${result.matchedField}: ${result.matchedValue?.substring(0, 50) || ''}${result.matchedValue?.length > 50 ? '...' : ''}`;
+    
+    resultText += `${index + 1}. **${item.name}** (점수: ${(result.score * 100).toFixed(1)}%)\n`;
+    resultText += `   📊 ${formatFileSize(item.size)} | 📅 ${formatDate(new Date(item.modified))}\n`;
+    resultText += `   🎯 매치: ${matchInfo}\n`;
+    
+    if (item.metadata.category) {
+      resultText += `   📂 카테고리: ${item.metadata.category}\n`;
+    }
+    
+    if (item.metadata.tags && item.metadata.tags.length > 0) {
+      resultText += `   🏷️ 태그: ${item.metadata.tags.join(', ')}\n`;
+    }
+    
+    resultText += '\n';
+  });
+
+  // 검색 통계 추가 (최적화된 엔진에서)
+  const searchStats = optimizedSearchEngine.getPerformanceStats();
+  resultText += `📈 검색 통계:\n`;
+  resultText += `- 전체 프롬프트: ${allItems.length}개\n`;
+  resultText += `- 매치율: ${(results.length / allItems.length * 100).toFixed(1)}%\n`;
+  resultText += `- 평균 점수: ${results.length > 0 ? (results.reduce((sum, r) => sum + r.score, 0) / results.length * 100).toFixed(1) : 0}%\n`;
+  resultText += `- 검색 성능: ${searchStats.avgSearchTime.toFixed(2)}ms`;
+  
+  return resultText;
+}
 
 // 프롬프트 디렉토리 확인 및 생성
 async function ensurePromptsDir() {
@@ -545,47 +720,31 @@ server.tool(
 
       const files = await fs.readdir(PROMPTS_DIR);
       const promptFiles = files.filter(f => !f.startsWith('.'));
-      const searchItems = [];
-
-      // 프롬프트 데이터 수집
-      for (const filename of promptFiles) {
-        const filePath = path.join(PROMPTS_DIR, filename);
-        const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
+      
+      // 환경 변수로 최적화된 검색 엔진 사용 여부 결정
+      const useOptimizedSearch = process.env.USE_OPTIMIZED_SEARCH !== 'false';
+      
+      if (useOptimizedSearch) {
+        // 최적화된 검색 엔진 사용
+        const searchResults = await performOptimizedSearch(
+          sanitizedQuery, 
+          promptFiles, 
+          { searchInContent, searchInMeta, threshold, maxResults }
+        );
         
-        try {
-          const stats = await fs.stat(filePath);
-          const item = {
-            name: filename,
-            size: stats.size,
-            modified: stats.mtime,
-            content: '',
-            metadata: { tags: [], category: '', description: '' }
-          };
+        // 캐시에 저장 (2분 TTL)
+        caches.search.set(cacheKey, searchResults, 120000);
+        
+        log.info('Optimized search completed', {
+          query: sanitizedQuery,
+          searchTime: Date.now()
+        });
 
-          // 내용 읽기
-          if (searchInContent) {
-            try {
-              item.content = await fs.readFile(filePath, "utf-8");
-            } catch (e) {
-              log.warn('Failed to read prompt content', { filename, error: e.message });
-            }
-          }
-
-          // 메타데이터 읽기
-          if (searchInMeta) {
-            try {
-              const metaContent = await fs.readFile(metaPath, "utf-8");
-              item.metadata = JSON.parse(metaContent);
-            } catch (e) {
-              // 메타데이터가 없어도 계속 진행
-            }
-          }
-
-          searchItems.push(item);
-        } catch (e) {
-          log.warn('Failed to process prompt file', { filename, error: e.message });
-        }
+        return createSuccessResponse(searchResults);
       }
+
+      // 기존 검색 로직 (폴백) - 향상된 병렬 처리 버전
+      const searchItems = await loadSearchItems(promptFiles, searchInContent, searchInMeta);
 
       if (searchItems.length === 0) {
         return createSuccessResponse('검색할 프롬프트가 없습니다');
