@@ -46,6 +46,7 @@ import {
 } from "./utils/cache.js";
 import { fuzzySearch, FuzzySearch } from "./utils/fuzzy-search.js";
 import { OptimizedSearchEngine } from "./utils/optimized-search-engine.js";
+import { OptimizedFileIO } from "./utils/optimized-file-io.js";
 import { templateLibrary } from "./utils/template-library.js";
 import { createImportExportManager } from "./utils/import-export.js";
 
@@ -86,6 +87,32 @@ const optimizedSearchEngine = new OptimizedSearchEngine({
   maxResults: 50
 });
 
+// 최적화된 파일 I/O 인스턴스 생성
+const optimizedFileIO = new OptimizedFileIO({
+  maxConcurrentFiles: parseInt(process.env.FILE_IO_CONCURRENT) || 10,
+  streamThreshold: parseInt(process.env.FILE_IO_STREAM_THRESHOLD) || 1024 * 1024, // 1MB
+  compressionThreshold: parseInt(process.env.FILE_IO_COMPRESSION_THRESHOLD) || 10 * 1024, // 10KB
+  enableCompression: process.env.FILE_IO_ENABLE_COMPRESSION !== 'false',
+  enableStreaming: process.env.FILE_IO_ENABLE_STREAMING !== 'false',
+  enableCaching: process.env.FILE_IO_ENABLE_CACHING !== 'false',
+  watchFiles: process.env.FILE_IO_WATCH_FILES !== 'false'
+});
+
+// 파일 변경 감지 설정
+if (process.env.FILE_IO_WATCH_FILES !== 'false') {
+  optimizedFileIO.watchDirectory(PROMPTS_DIR, (eventType, filePath) => {
+    log.debug('Prompt directory changed', { eventType, filePath });
+    
+    // 관련 캐시 무효화
+    const filename = path.basename(filePath);
+    const cacheKey = CacheKeyGenerator.file(filename);
+    caches.files.delete(cacheKey);
+    
+    // 검색 캐시도 무효화 (파일 변경 시 검색 결과가 달라질 수 있음)
+    caches.search.clear();
+  });
+}
+
 // 서버 인스턴스 생성
 const server = new McpServer({
   name: "prompt-manager",
@@ -99,8 +126,102 @@ const server = new McpServer({
 // 서버 시작 시간 기록
 const SERVER_START_TIME = Date.now();
 
-// 검색 데이터 로딩 헬퍼 함수
+// 검색 데이터 로딩 헬퍼 함수 (최적화된 I/O 사용)
 async function loadSearchItems(promptFiles, searchInContent, searchInMeta) {
+  const useOptimizedIO = process.env.USE_OPTIMIZED_IO !== 'false';
+  
+  if (useOptimizedIO && promptFiles.length > 5) {
+    return await loadSearchItemsOptimized(promptFiles, searchInContent, searchInMeta);
+  } else {
+    return await loadSearchItemsStandard(promptFiles, searchInContent, searchInMeta);
+  }
+}
+
+// 최적화된 I/O를 사용한 검색 데이터 로딩
+async function loadSearchItemsOptimized(promptFiles, searchInContent, searchInMeta) {
+  const searchItems = [];
+  
+  // 읽을 파일 경로들 준비
+  const filesToRead = [];
+  const metaFilesToRead = [];
+  
+  promptFiles.forEach(filename => {
+    const filePath = path.join(PROMPTS_DIR, filename);
+    const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
+    
+    if (searchInContent) {
+      filesToRead.push(filePath);
+    }
+    if (searchInMeta) {
+      metaFilesToRead.push(metaPath);
+    }
+  });
+  
+  try {
+    // 병렬 배치 파일 읽기
+    const [contentResults, metaResults] = await Promise.allSettled([
+      searchInContent ? optimizedFileIO.readFilesBatch(filesToRead) : Promise.resolve([]),
+      searchInMeta ? optimizedFileIO.readFilesBatch(metaFilesToRead) : Promise.resolve([])
+    ]);
+    
+    // 결과 조합
+    for (let i = 0; i < promptFiles.length; i++) {
+      const filename = promptFiles[i];
+      const filePath = path.join(PROMPTS_DIR, filename);
+      
+      try {
+        const stats = await fs.stat(filePath);
+        const item = {
+          name: filename,
+          size: stats.size,
+          modified: stats.mtime,
+          content: '',
+          metadata: { tags: [], category: '', description: '' }
+        };
+
+        // 내용 설정
+        if (searchInContent && contentResults.status === 'fulfilled') {
+          const contentResult = contentResults.value[i];
+          if (contentResult && contentResult.status === 'fulfilled') {
+            item.content = contentResult.value.content || '';
+          }
+        }
+
+        // 메타데이터 설정
+        if (searchInMeta && metaResults.status === 'fulfilled') {
+          const metaResult = metaResults.value[i];
+          if (metaResult && metaResult.status === 'fulfilled') {
+            try {
+              item.metadata = JSON.parse(metaResult.value.content) || item.metadata;
+            } catch (e) {
+              // JSON 파싱 실패 시 기본값 유지
+            }
+          }
+        }
+
+        searchItems.push(item);
+      } catch (e) {
+        log.warn('Failed to process prompt file', { filename, error: e.message });
+      }
+    }
+    
+    log.debug('Search items loaded with optimized I/O', {
+      itemCount: searchItems.length,
+      useContent: searchInContent,
+      useMeta: searchInMeta,
+      stats: optimizedFileIO.getPerformanceStats()
+    });
+    
+  } catch (error) {
+    log.error('Optimized file loading failed, falling back to standard', { error: error.message });
+    return await loadSearchItemsStandard(promptFiles, searchInContent, searchInMeta);
+  }
+  
+  return searchItems;
+}
+
+// 표준 I/O를 사용한 검색 데이터 로딩 (폴백)
+async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMeta) {
   const searchItems = [];
   
   // 병렬 파일 읽기로 성능 향상
