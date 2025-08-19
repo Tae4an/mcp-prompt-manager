@@ -47,6 +47,7 @@ import {
 import { fuzzySearch, FuzzySearch } from "./utils/fuzzy-search.js";
 import { OptimizedSearchEngine } from "./utils/optimized-search-engine.js";
 import { OptimizedFileIO } from "./utils/optimized-file-io.js";
+import { CPUWorkerPool } from "./utils/cpu-worker-pool.js";
 import { templateLibrary } from "./utils/template-library.js";
 import { createImportExportManager } from "./utils/import-export.js";
 
@@ -112,6 +113,28 @@ if (process.env.FILE_IO_WATCH_FILES !== 'false') {
     caches.search.clear();
   });
 }
+
+// CPU 워커 풀 인스턴스 생성
+const cpuWorkerPool = new CPUWorkerPool({
+  maxWorkers: parseInt(process.env.CPU_MAX_WORKERS) || require('os').cpus().length,
+  minWorkers: parseInt(process.env.CPU_MIN_WORKERS) || Math.max(2, Math.floor(require('os').cpus().length / 2)),
+  enableAutoScaling: process.env.CPU_AUTO_SCALING !== 'false',
+  workerIdleTimeout: parseInt(process.env.CPU_WORKER_IDLE_TIMEOUT) || 30000,
+  taskTimeout: parseInt(process.env.CPU_TASK_TIMEOUT) || 60000
+});
+
+// 서버 종료 시 워커 풀 정리
+process.on('SIGINT', async () => {
+  log.info('Shutting down server...');
+  await cpuWorkerPool.destroy();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  log.info('Shutting down server...');
+  await cpuWorkerPool.destroy();
+  process.exit(0);
+});
 
 // 서버 인스턴스 생성
 const server = new McpServer({
@@ -187,14 +210,25 @@ async function loadSearchItemsOptimized(promptFiles, searchInContent, searchInMe
           }
         }
 
-        // 메타데이터 설정
+        // 메타데이터 설정 (CPU 워커 풀 활용)
         if (searchInMeta && metaResults.status === 'fulfilled') {
           const metaResult = metaResults.value[i];
           if (metaResult && metaResult.status === 'fulfilled') {
             try {
-              item.metadata = JSON.parse(metaResult.value.content) || item.metadata;
+              const useWorkerPool = process.env.USE_CPU_WORKERS !== 'false' && 
+                                   metaResult.value.content.length > 1000; // 1KB 이상
+              
+              if (useWorkerPool) {
+                // CPU 워커로 JSON 파싱
+                const parsed = await cpuWorkerPool.parseJSONParallel([metaResult.value.content]);
+                item.metadata = parsed[0] || item.metadata;
+              } else {
+                // 표준 JSON 파싱
+                item.metadata = JSON.parse(metaResult.value.content) || item.metadata;
+              }
             } catch (e) {
               // JSON 파싱 실패 시 기본값 유지
+              log.debug('JSON parsing failed', { filename, error: e.message });
             }
           }
         }
@@ -253,7 +287,23 @@ async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMet
       if (searchInMeta) {
         promises.push(
           fs.readFile(metaPath, "utf-8")
-            .then(metaContent => { item.metadata = JSON.parse(metaContent); })
+            .then(async (metaContent) => { 
+              try {
+                const useWorkerPool = process.env.USE_CPU_WORKERS !== 'false' && 
+                                     metaContent.length > 1000; // 1KB 이상
+                
+                if (useWorkerPool) {
+                  // CPU 워커로 JSON 파싱
+                  const parsed = await cpuWorkerPool.parseJSONParallel([metaContent]);
+                  item.metadata = parsed[0] || item.metadata;
+                } else {
+                  // 표준 JSON 파싱
+                  item.metadata = JSON.parse(metaContent);
+                }
+              } catch (e) {
+                log.debug('JSON parsing failed in standard loader', { filename, error: e.message });
+              }
+            })
             .catch(() => {}) // 메타데이터가 없어도 계속 진행
         );
       }
