@@ -1,0 +1,91 @@
+{
+  "moduleUsage": [
+    [
+      "cache",
+      {
+        "totalUsage": 2,
+        "recentUsage": 2,
+        "lastUsed": 1755948697709,
+        "dailyUsage": [
+          {
+            "date": "Sat Aug 23 2025",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    [
+      "optimized-search-engine",
+      {
+        "totalUsage": 2,
+        "recentUsage": 2,
+        "lastUsed": 1755948697709,
+        "dailyUsage": [
+          {
+            "date": "Sat Aug 23 2025",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    [
+      "optimized-file-io",
+      {
+        "totalUsage": 2,
+        "recentUsage": 2,
+        "lastUsed": 1755948697709,
+        "dailyUsage": [
+          {
+            "date": "Sat Aug 23 2025",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    [
+      "version-manager",
+      {
+        "totalUsage": 2,
+        "recentUsage": 2,
+        "lastUsed": 1755948697709,
+        "dailyUsage": [
+          {
+            "date": "Sat Aug 23 2025",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    [
+      "template-engine",
+      {
+        "totalUsage": 2,
+        "recentUsage": 2,
+        "lastUsed": 1755948697709,
+        "dailyUsage": [
+          {
+            "date": "Sat Aug 23 2025",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    [
+      "rate-limiter",
+      {
+        "totalUsage": 2,
+        "recentUsage": 2,
+        "lastUsed": 1755948697709,
+        "dailyUsage": [
+          {
+            "date": "Sat Aug 23 2025",
+            "count": 2
+          }
+        ]
+      }
+    ]
+  ],
+  "toolUsage": [],
+  "dailyPatterns": [],
+  "timestamp": 1755948698660
+}

@@ -1,0 +1,70 @@
+{
+  "modulePriorities": {
+    "CRITICAL": [
+      "McpServer",
+      "logger",
+      "error-handler",
+      "validation"
+    ],
+    "HIGH": [
+      "optimized-search-engine",
+      "cache",
+      "input-sanitizer",
+      "rate-limiter"
+    ],
+    "MEDIUM": [
+      "fuzzy-search",
+      "optimized-file-io",
+      "version-manager"
+    ],
+    "LOW": [
+      "cpu-worker-pool",
+      "template-engine",
+      "template-library",
+      "import-export"
+    ]
+  },
+  "startupStats": {
+    "totalStartupTime": 1,
+    "readyTime": 1,
+    "criticalLoadTime": 1,
+    "highLoadTime": 0,
+    "mediumLoadTime": 0,
+    "lowLoadTime": null,
+    "loadingStates": {
+      "CRITICAL": {
+        "loaded": true,
+        "loading": false,
+        "startTime": 1755948697657,
+        "loadTime": 1
+      },
+      "HIGH": {
+        "loaded": true,
+        "loading": false,
+        "startTime": 1755948697658,
+        "loadTime": 0
+      },
+      "MEDIUM": {
+        "loaded": true,
+        "loading": false,
+        "startTime": 1755948697760,
+        "loadTime": 0
+      },
+      "LOW": {
+        "loaded": false,
+        "loading": true,
+        "startTime": 1755948697760,
+        "loadTime": null
+      }
+    },
+    "loadedModules": {
+      "critical": 0,
+      "high": 4,
+      "medium": 3,
+      "low": 3,
+      "total": 10
+    },
+    "backgroundPending": 0
+  },
+  "timestamp": 1755948698661
+}
