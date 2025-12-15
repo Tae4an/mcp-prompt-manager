@@ -132,19 +132,9 @@ export class Logger {
 
     const formatted = this.formatLogEntry(entry);
     
-    switch (entry.level) {
-      case LogLevel.ERROR:
-        console.error(formatted);
-        break;
-      case LogLevel.WARN:
-        console.warn(formatted);
-        break;
-      case LogLevel.DEBUG:
-        console.debug(formatted);
-        break;
-      default:
-        console.log(formatted);
-    }
+    // MCP 서버에서는 stdout이 JSON-RPC 통신에 사용되므로
+    // 모든 로그는 stderr로 출력해야 함
+    process.stderr.write(formatted + '\n');
   }
 
   async log(level, message, metadata = {}) {
