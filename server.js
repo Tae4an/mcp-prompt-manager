@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as os from "os";
 import { fileURLToPath } from "url";
 import { VersionManager } from "./utils/version-manager.js";
 import {
@@ -37,12 +38,12 @@ import { log, defaultLogger } from "./utils/logger.js";
 import { RateLimiter, rateLimitPresets } from "./utils/rate-limiter.js";
 import { inputSanitizer } from "./utils/input-sanitizer.js";
 import { templateEngine } from "./utils/template-engine.js";
-import { 
-  createFileCache, 
-  createMetadataCache, 
-  createSearchCache, 
+import {
+  createFileCache,
+  createMetadataCache,
+  createSearchCache,
   createTemplateCache,
-  ServerCacheKeyGenerator as CacheKeyGenerator 
+  ServerCacheKeyGenerator as CacheKeyGenerator
 } from "./utils/cache.js";
 import { fuzzySearch, FuzzySearch } from "./utils/fuzzy-search.js";
 import { OptimizedSearchEngine } from "./utils/optimized-search-engine.js";
@@ -103,12 +104,12 @@ const optimizedFileIO = new OptimizedFileIO({
 if (process.env.FILE_IO_WATCH_FILES !== 'false') {
   optimizedFileIO.watchDirectory(PROMPTS_DIR, (eventType, filePath) => {
     log.debug('Prompt directory changed', { eventType, filePath });
-    
+
     // 관련 캐시 무효화
     const filename = path.basename(filePath);
     const cacheKey = CacheKeyGenerator.file(filename);
     caches.files.delete(cacheKey);
-    
+
     // 검색 캐시도 무효화 (파일 변경 시 검색 결과가 달라질 수 있음)
     caches.search.clear();
   });
@@ -116,8 +117,8 @@ if (process.env.FILE_IO_WATCH_FILES !== 'false') {
 
 // CPU 워커 풀 인스턴스 생성
 const cpuWorkerPool = new CPUWorkerPool({
-  maxWorkers: parseInt(process.env.CPU_MAX_WORKERS) || require('os').cpus().length,
-  minWorkers: parseInt(process.env.CPU_MIN_WORKERS) || Math.max(2, Math.floor(require('os').cpus().length / 2)),
+  maxWorkers: parseInt(process.env.CPU_MAX_WORKERS) || os.cpus().length,
+  minWorkers: parseInt(process.env.CPU_MIN_WORKERS) || Math.max(2, Math.floor(os.cpus().length / 2)),
   enableAutoScaling: process.env.CPU_AUTO_SCALING !== 'false',
   workerIdleTimeout: parseInt(process.env.CPU_WORKER_IDLE_TIMEOUT) || 30000,
   taskTimeout: parseInt(process.env.CPU_TASK_TIMEOUT) || 60000
@@ -152,7 +153,7 @@ const SERVER_START_TIME = Date.now();
 // 검색 데이터 로딩 헬퍼 함수 (최적화된 I/O 사용)
 async function loadSearchItems(promptFiles, searchInContent, searchInMeta) {
   const useOptimizedIO = process.env.USE_OPTIMIZED_IO !== 'false';
-  
+
   if (useOptimizedIO && promptFiles.length > 5) {
     return await loadSearchItemsOptimized(promptFiles, searchInContent, searchInMeta);
   } else {
@@ -163,15 +164,15 @@ async function loadSearchItems(promptFiles, searchInContent, searchInMeta) {
 // 최적화된 I/O를 사용한 검색 데이터 로딩
 async function loadSearchItemsOptimized(promptFiles, searchInContent, searchInMeta) {
   const searchItems = [];
-  
+
   // 읽을 파일 경로들 준비
   const filesToRead = [];
   const metaFilesToRead = [];
-  
+
   promptFiles.forEach(filename => {
     const filePath = path.join(PROMPTS_DIR, filename);
     const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-    
+
     if (searchInContent) {
       filesToRead.push(filePath);
     }
@@ -179,19 +180,19 @@ async function loadSearchItemsOptimized(promptFiles, searchInContent, searchInMe
       metaFilesToRead.push(metaPath);
     }
   });
-  
+
   try {
     // 병렬 배치 파일 읽기
     const [contentResults, metaResults] = await Promise.allSettled([
       searchInContent ? optimizedFileIO.readFilesBatch(filesToRead) : Promise.resolve([]),
       searchInMeta ? optimizedFileIO.readFilesBatch(metaFilesToRead) : Promise.resolve([])
     ]);
-    
+
     // 결과 조합
     for (let i = 0; i < promptFiles.length; i++) {
       const filename = promptFiles[i];
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       try {
         const stats = await fs.stat(filePath);
         const item = {
@@ -215,9 +216,9 @@ async function loadSearchItemsOptimized(promptFiles, searchInContent, searchInMe
           const metaResult = metaResults.value[i];
           if (metaResult && metaResult.status === 'fulfilled') {
             try {
-              const useWorkerPool = process.env.USE_CPU_WORKERS !== 'false' && 
-                                   metaResult.value.content.length > 1000; // 1KB 이상
-              
+              const useWorkerPool = process.env.USE_CPU_WORKERS !== 'false' &&
+                metaResult.value.content.length > 1000; // 1KB 이상
+
               if (useWorkerPool) {
                 // CPU 워커로 JSON 파싱
                 const parsed = await cpuWorkerPool.parseJSONParallel([metaResult.value.content]);
@@ -238,31 +239,31 @@ async function loadSearchItemsOptimized(promptFiles, searchInContent, searchInMe
         log.warn('Failed to process prompt file', { filename, error: e.message });
       }
     }
-    
+
     log.debug('Search items loaded with optimized I/O', {
       itemCount: searchItems.length,
       useContent: searchInContent,
       useMeta: searchInMeta,
       stats: optimizedFileIO.getPerformanceStats()
     });
-    
+
   } catch (error) {
     log.error('Optimized file loading failed, falling back to standard', { error: error.message });
     return await loadSearchItemsStandard(promptFiles, searchInContent, searchInMeta);
   }
-  
+
   return searchItems;
 }
 
 // 표준 I/O를 사용한 검색 데이터 로딩 (폴백)
 async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMeta) {
   const searchItems = [];
-  
+
   // 병렬 파일 읽기로 성능 향상
   const filePromises = promptFiles.map(async (filename) => {
     const filePath = path.join(PROMPTS_DIR, filename);
     const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-    
+
     try {
       const stats = await fs.stat(filePath);
       const item = {
@@ -275,7 +276,7 @@ async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMet
 
       // 병렬로 내용과 메타데이터 읽기
       const promises = [];
-      
+
       if (searchInContent) {
         promises.push(
           fs.readFile(filePath, "utf-8")
@@ -287,11 +288,11 @@ async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMet
       if (searchInMeta) {
         promises.push(
           fs.readFile(metaPath, "utf-8")
-            .then(async (metaContent) => { 
+            .then(async (metaContent) => {
               try {
-                const useWorkerPool = process.env.USE_CPU_WORKERS !== 'false' && 
-                                     metaContent.length > 1000; // 1KB 이상
-                
+                const useWorkerPool = process.env.USE_CPU_WORKERS !== 'false' &&
+                  metaContent.length > 1000; // 1KB 이상
+
                 if (useWorkerPool) {
                   // CPU 워커로 JSON 파싱
                   const parsed = await cpuWorkerPool.parseJSONParallel([metaContent]);
@@ -304,10 +305,10 @@ async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMet
                 log.debug('JSON parsing failed in standard loader', { filename, error: e.message });
               }
             })
-            .catch(() => {}) // 메타데이터가 없어도 계속 진행
+            .catch(() => { }) // 메타데이터가 없어도 계속 진행
         );
       }
-      
+
       await Promise.all(promises);
       return item;
     } catch (e) {
@@ -315,7 +316,7 @@ async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMet
       return null;
     }
   });
-  
+
   const items = await Promise.all(filePromises);
   return items.filter(item => item !== null);
 }
@@ -323,23 +324,23 @@ async function loadSearchItemsStandard(promptFiles, searchInContent, searchInMet
 // 최적화된 검색 수행 함수
 async function performOptimizedSearch(query, promptFiles, options) {
   const { searchInContent, searchInMeta, threshold, maxResults } = options;
-  
+
   // 검색 데이터 로딩
   const searchItems = await loadSearchItems(promptFiles, searchInContent, searchInMeta);
-  
+
   if (searchItems.length === 0) {
     return '검색할 프롬프트가 없습니다';
   }
-  
+
   // 인덱스가 비어있거나 데이터가 변경된 경우 재구축
-  const shouldRebuildIndex = optimizedSearchEngine.indexes.trigrams.size === 0 || 
-                            searchItems.length !== optimizedSearchEngine.lastIndexedCount;
-  
+  const shouldRebuildIndex = optimizedSearchEngine.indexes.trigrams.size === 0 ||
+    searchItems.length !== optimizedSearchEngine.lastIndexedCount;
+
   if (shouldRebuildIndex) {
     optimizedSearchEngine.buildIndexes(searchItems);
     optimizedSearchEngine.lastIndexedCount = searchItems.length;
   }
-  
+
   // 검색 필드 설정
   const searchFields = {};
   if (searchInContent) searchFields.content = query;
@@ -348,10 +349,10 @@ async function performOptimizedSearch(query, promptFiles, options) {
     searchFields['metadata.description'] = query;
   }
   searchFields.name = query; // 파일명은 항상 검색
-  
+
   // 최적화된 병렬 검색 실행
   const results = await optimizedSearchEngine.searchParallel(query, searchItems, searchFields);
-  
+
   // 태그 검색 (배열 처리)
   if (searchInMeta) {
     const tagResults = [];
@@ -372,25 +373,25 @@ async function performOptimizedSearch(query, promptFiles, options) {
         }
       }
     }
-    
+
     // 태그 결과를 메인 결과와 병합
     const resultMap = new Map(results.map(r => [r.item.name, r]));
-    
+
     for (const tagResult of tagResults) {
       const existing = resultMap.get(tagResult.item.name);
       if (!existing || tagResult.score > existing.score) {
         resultMap.set(tagResult.item.name, tagResult);
       }
     }
-    
+
     results.length = 0;
     results.push(...Array.from(resultMap.values()));
     results.sort((a, b) => b.score - a.score);
   }
-  
+
   // 결과를 지정된 개수로 제한
   const limitedResults = results.slice(0, maxResults);
-  
+
   // 결과 포맷팅
   return formatSearchResults(query, limitedResults, searchItems);
 }
@@ -402,25 +403,25 @@ function formatSearchResults(query, results, allItems) {
   }
 
   let resultText = `🔍 검색 결과: "${query}" (${results.length}개 발견)\n\n`;
-  
+
   results.forEach((result, index) => {
     const item = result.item;
-    const matchInfo = result.matchedField === 'tags' ? 
-      `태그: ${result.matchedValue}` : 
+    const matchInfo = result.matchedField === 'tags' ?
+      `태그: ${result.matchedValue}` :
       `${result.matchedField}: ${result.matchedValue?.substring(0, 50) || ''}${result.matchedValue?.length > 50 ? '...' : ''}`;
-    
+
     resultText += `${index + 1}. **${item.name}** (점수: ${(result.score * 100).toFixed(1)}%)\n`;
     resultText += `   📊 ${formatFileSize(item.size)} | 📅 ${formatDate(new Date(item.modified))}\n`;
     resultText += `   🎯 매치: ${matchInfo}\n`;
-    
+
     if (item.metadata.category) {
       resultText += `   📂 카테고리: ${item.metadata.category}\n`;
     }
-    
+
     if (item.metadata.tags && item.metadata.tags.length > 0) {
       resultText += `   🏷️ 태그: ${item.metadata.tags.join(', ')}\n`;
     }
-    
+
     resultText += '\n';
   });
 
@@ -431,7 +432,7 @@ function formatSearchResults(query, results, allItems) {
   resultText += `- 매치율: ${(results.length / allItems.length * 100).toFixed(1)}%\n`;
   resultText += `- 평균 점수: ${results.length > 0 ? (results.reduce((sum, r) => sum + r.score, 0) / results.length * 100).toFixed(1) : 0}%\n`;
   resultText += `- 검색 성능: ${searchStats.avgSearchTime.toFixed(2)}ms`;
-  
+
   return resultText;
 }
 
@@ -450,7 +451,7 @@ async function ensurePromptsDir() {
 function checkRateLimit(operation, clientId = 'default') {
   const limiter = rateLimiters.standard;
   const result = limiter.checkLimit(clientId);
-  
+
   if (!result.allowed) {
     log.warn('Rate limit exceeded for operation', {
       operation,
@@ -459,7 +460,7 @@ function checkRateLimit(operation, clientId = 'default') {
     });
     throw new Error(`Rate limit exceeded. Retry after ${result.retryAfter} seconds.`);
   }
-  
+
   return result;
 }
 
@@ -523,11 +524,11 @@ server.tool(
     try {
       // Rate limiting 적용
       checkRateLimit('list-prompts');
-      
+
       // 캐시 확인
       const cacheKey = CacheKeyGenerator.list();
       let prompts = caches.files.get(cacheKey);
-      
+
       if (!prompts) {
         // 캐시 미스 - 파일 시스템에서 읽기
         const files = await fs.readdir(PROMPTS_DIR);
@@ -542,7 +543,7 @@ server.tool(
             };
           })
         );
-        
+
         // 캐시에 저장 (5분 TTL)
         caches.files.set(cacheKey, prompts, 300000);
         log.debug('Prompt list cached', { count: prompts.length });
@@ -555,7 +556,7 @@ server.tool(
       }
 
       // 목록 포맷팅
-      const promptsList = prompts.map(p => 
+      const promptsList = prompts.map(p =>
         `${p.name} (${formatFileSize(p.size)}, last modified: ${formatDate(new Date(p.modified))})`
       ).join("\n");
 
@@ -594,13 +595,13 @@ server.tool(
       result += `- node: ${process.version}\n`;
       result += `- pid: ${process.pid}\n`;
       result += `- promptsDir: ${PROMPTS_DIR}\n`;
-      result += `- uptime: ${(uptimeMs/1000).toFixed(0)} sec\n\n`;
+      result += `- uptime: ${(uptimeMs / 1000).toFixed(0)} sec\n\n`;
       result += `메모리 사용량\n`;
       result += `- rss: ${fmtMb(mem.rss)} / heapUsed: ${fmtMb(mem.heapUsed)} / external: ${fmtMb(mem.external)}\n\n`;
       result += `정책\n`;
-      Object.entries(policy).forEach(([k,v])=>{ result += `- ${k}: ${v ? 'ON' : 'OFF'}\n`; });
+      Object.entries(policy).forEach(([k, v]) => { result += `- ${k}: ${v ? 'ON' : 'OFF'}\n`; });
       result += `\n캐시 정보\n`;
-      Object.entries(cachesInfo).forEach(([name, info])=>{
+      Object.entries(cachesInfo).forEach(([name, info]) => {
         result += `■ ${name} (size: ${info.size}/${info.maxSize}, ttl: ${info.defaultTTL}ms)\n`;
       });
       return createSuccessResponse(result.trim());
@@ -621,26 +622,26 @@ server.tool(
     try {
       // Rate limiting 적용
       checkRateLimit('get-prompt');
-      
+
       // 입력 정제
       const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
-      
+
       // 캐시 확인
       const cacheKey = CacheKeyGenerator.file(sanitizedFilename);
       let content = caches.files.get(cacheKey);
-      
+
       if (!content) {
         // 캐시 미스 - 파일 시스템에서 읽기
         const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
         content = await fs.readFile(filePath, "utf-8");
-        
+
         // 캐시에 저장 (10분 TTL)
         caches.files.set(cacheKey, content, 600000);
         log.debug('Prompt content cached', { filename: sanitizedFilename, size: content.length });
       } else {
         log.debug('Prompt content served from cache', { filename: sanitizedFilename });
       }
-      
+
       return createSuccessResponse(`Prompt: ${sanitizedFilename}\n\n${content}`);
     } catch (error) {
       return createErrorResponse(`Failed to get prompt ${filename}: ${error.message}`, error);
@@ -661,19 +662,19 @@ server.tool(
       // Rate limiting 적용 (업로드 타입 제한)
       checkRateLimit('create-prompt');
       enforcePolicy('create');
-      
+
       // 고급 입력 검증 및 정제
       const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
-      const sanitizedContent = inputSanitizer.sanitizeText(content, { 
+      const sanitizedContent = inputSanitizer.sanitizeText(content, {
         maxLength: 1024 * 1024, // 1MB
         allowHTML: false,
-        allowNewlines: true 
+        allowNewlines: true
       });
-      
+
       // 위험도 평가
       const filenameRisk = inputSanitizer.assessRisk(sanitizedFilename);
       const contentRisk = inputSanitizer.assessRisk(sanitizedContent);
-      
+
       if (filenameRisk.level === 'high' || contentRisk.level === 'high') {
         log.warn('High risk input detected', {
           operation: 'create-prompt',
@@ -682,7 +683,7 @@ server.tool(
         });
         throw new ValidationError('위험한 입력이 감지되었습니다', 'security');
       }
-      
+
       // 기존 검증 로직도 유지
       const filenameValidation = validateFilename(sanitizedFilename);
       if (!filenameValidation.isValid) {
@@ -698,14 +699,14 @@ server.tool(
       if (!validatePathSafety(sanitizedFilename)) {
         throw new ValidationError(`Unsafe path detected: ${sanitizedFilename}`, 'filename');
       }
-      
+
       const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
-      
+
       // 작업 시작 로깅
       const timer = log.time(`create-prompt-${sanitizedFilename}`);
-      log.info('Creating new prompt', { 
-        filename: sanitizedFilename, 
-        contentLength: sanitizedContent.length 
+      log.info('Creating new prompt', {
+        filename: sanitizedFilename,
+        contentLength: sanitizedContent.length
       });
 
       // 파일 작업을 안전하게 실행
@@ -718,29 +719,29 @@ server.tool(
           if (e instanceof FileAlreadyExistsError) throw e;
           // 파일이 없으면 계속 진행
         }
-        
+
         // 재시도 가능한 파일 쓰기 작업
         await retryOperation(async () => {
           await fs.writeFile(filePath, sanitizedContent, "utf-8");
         });
-        
+
         // 버전 히스토리에 저장
         const version = await versionManager.saveVersion(sanitizedFilename, sanitizedContent, "create");
-        
+
         log.info('Prompt created successfully', {
           filename: sanitizedFilename,
           version: version.version,
           size: sanitizedContent.length
         });
-        
+
         return `Successfully created prompt: ${sanitizedFilename} (Version ${version.version})`;
       }, `Creating prompt: ${sanitizedFilename}`);
-      
+
       await timer.end({ operation: 'create-prompt', filename: sanitizedFilename });
-      
+
       // 캐시 무효화 일원화
       invalidateCaches({ filename: sanitizedFilename });
-      
+
       return toMcpSuccessResponse(result);
     } catch (error) {
       return toMcpErrorResponse(error);
@@ -761,7 +762,7 @@ server.tool(
       // Rate limiting 적용
       checkRateLimit('update-prompt');
       enforcePolicy('update');
-      
+
       // 입력 검증
       const filenameValidation = validateFilename(filename);
       if (!filenameValidation.isValid) {
@@ -781,24 +782,24 @@ server.tool(
       // 입력 정제
       const sanitizedFilename = sanitizeInput(filename);
       const sanitizedContent = sanitizeInput(content);
-      
+
       const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
       } catch (e) {
         return createErrorResponse(`Prompt "${sanitizedFilename}" does not exist. Use create-prompt to create it.`);
       }
-      
+
       await fs.writeFile(filePath, sanitizedContent, "utf-8");
-      
+
       // 버전 히스토리에 저장
       const version = await versionManager.saveVersion(sanitizedFilename, sanitizedContent, "update");
-      
+
       // 캐시 무효화
       invalidateCaches({ filename: sanitizedFilename });
-      
+
       return createSuccessResponse(`Successfully updated prompt: ${sanitizedFilename} (Version ${version.version})`);
     } catch (error) {
       return createErrorResponse(`Failed to update prompt ${filename}: ${error.message}`, error);
@@ -820,17 +821,17 @@ server.tool(
       enforcePolicy('delete');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
       } catch (e) {
         return createErrorResponse(`Prompt "${filename}" does not exist.`);
       }
-      
+
       // 프롬프트 파일 삭제
       await fs.unlink(filePath);
-      
+
       // 메타데이터 파일도 삭제 (존재하는 경우)
       try {
         await fs.access(metaPath);
@@ -838,13 +839,13 @@ server.tool(
       } catch (e) {
         // 메타데이터 파일이 없으면 무시
       }
-      
+
       // 버전 히스토리도 삭제
       await versionManager.deleteVersionHistory(filename);
-      
+
       // 캐시 무효화
       invalidateCaches({ filename, invalidateContent: true, invalidateMetadata: true });
-      
+
       return createSuccessResponse(`Successfully deleted prompt: ${filename}`);
     } catch (error) {
       return createErrorResponse(`Failed to delete prompt ${filename}: ${error.message}`, error);
@@ -867,13 +868,13 @@ server.tool(
     try {
       // Rate limiting 적용
       checkRateLimit('search-prompts');
-      
+
       // 입력 검증
-      const sanitizedQuery = inputSanitizer.sanitizeText(query, { 
-        maxLength: 200, 
-        allowHTML: false 
+      const sanitizedQuery = inputSanitizer.sanitizeText(query, {
+        maxLength: 200,
+        allowHTML: false
       });
-      
+
       if (!sanitizedQuery) {
         return createErrorResponse('검색어를 입력해주세요');
       }
@@ -881,31 +882,31 @@ server.tool(
       // 캐시 확인
       const cacheKey = CacheKeyGenerator.search(sanitizedQuery, { searchInContent, searchInMeta, threshold });
       let cachedResults = caches.search.get(cacheKey);
-      
+
       if (cachedResults) {
-        log.debug('Search results served from cache', { 
-          query: sanitizedQuery 
+        log.debug('Search results served from cache', {
+          query: sanitizedQuery
         });
         return createSuccessResponse(cachedResults);
       }
 
       const files = await fs.readdir(PROMPTS_DIR);
       const promptFiles = files.filter(f => !f.startsWith('.'));
-      
+
       // 환경 변수로 최적화된 검색 엔진 사용 여부 결정
       const useOptimizedSearch = process.env.USE_OPTIMIZED_SEARCH !== 'false';
-      
+
       if (useOptimizedSearch) {
         // 최적화된 검색 엔진 사용
         const searchResults = await performOptimizedSearch(
-          sanitizedQuery, 
-          promptFiles, 
+          sanitizedQuery,
+          promptFiles,
           { searchInContent, searchInMeta, threshold, maxResults }
         );
-        
+
         // 캐시에 저장 (2분 TTL)
         caches.search.set(cacheKey, searchResults, 120000);
-        
+
         log.info('Optimized search completed', {
           query: sanitizedQuery,
           searchTime: Date.now()
@@ -935,7 +936,7 @@ server.tool(
         searchFields['metadata.category'] = sanitizedQuery;
         searchFields['metadata.description'] = sanitizedQuery;
       }
-      
+
       // 파일명은 항상 검색
       searchFields.name = sanitizedQuery;
 
@@ -944,24 +945,24 @@ server.tool(
       // 개별 필드별로 검색 수행
       for (const [field, fieldQuery] of Object.entries(searchFields)) {
         const fieldResults = fuzzySearcher.searchObjects(fieldQuery, searchItems, [field]);
-        
+
         // 기존 결과와 병합 (중복 제거)
         for (const result of fieldResults) {
           const existingIndex = results.findIndex(r => r.item.name === result.item.name);
           if (existingIndex >= 0) {
             // 더 높은 점수로 업데이트
             if (result.score > results[existingIndex].score) {
-              results[existingIndex] = { 
-                ...result, 
-                matchedField: field, 
-                matchedValue: result.matchedValue 
+              results[existingIndex] = {
+                ...result,
+                matchedField: field,
+                matchedValue: result.matchedValue
               };
             }
           } else {
-            results.push({ 
-              ...result, 
-              matchedField: field, 
-              matchedValue: result.matchedValue 
+            results.push({
+              ...result,
+              matchedField: field,
+              matchedValue: result.matchedValue
             });
           }
         }
@@ -975,7 +976,7 @@ server.tool(
             if (tagResults.length > 0) {
               const bestTagMatch = tagResults[0];
               const existingIndex = results.findIndex(r => r.item.name === item.name);
-              
+
               if (existingIndex >= 0) {
                 if (bestTagMatch.score > results[existingIndex].score) {
                   results[existingIndex] = {
@@ -1004,34 +1005,34 @@ server.tool(
 
       if (results.length === 0) {
         const noResultsMessage = `"${sanitizedQuery}"와 일치하는 프롬프트를 찾을 수 없습니다.\n\n💡 검색 팁:\n- 철자를 확인해보세요\n- 더 간단한 단어를 사용해보세요\n- 임계값을 낮춰보세요 (현재: ${threshold})`;
-        
+
         // 캐시에 저장 (빈 결과도 짧게 캐시)
         caches.search.set(cacheKey, noResultsMessage, 60000); // 1분
-        
+
         return createSuccessResponse(noResultsMessage);
       }
 
       // 결과 포맷팅
       let resultText = `🔍 검색 결과: "${sanitizedQuery}" (${results.length}개 발견)\n\n`;
-      
+
       results.forEach((result, index) => {
         const item = result.item;
-        const matchInfo = result.matchedField === 'tags' ? 
-          `태그: ${result.matchedValue}` : 
+        const matchInfo = result.matchedField === 'tags' ?
+          `태그: ${result.matchedValue}` :
           `${result.matchedField}: ${result.matchedValue?.substring(0, 50) || ''}${result.matchedValue?.length > 50 ? '...' : ''}`;
-        
+
         resultText += `${index + 1}. **${item.name}** (점수: ${(result.score * 100).toFixed(1)}%)\n`;
         resultText += `   📊 ${formatFileSize(item.size)} | 📅 ${formatDate(new Date(item.modified))}\n`;
         resultText += `   🎯 매치: ${matchInfo}\n`;
-        
+
         if (item.metadata.category) {
           resultText += `   📂 카테고리: ${item.metadata.category}\n`;
         }
-        
+
         if (item.metadata.tags && item.metadata.tags.length > 0) {
           resultText += `   🏷️ 태그: ${item.metadata.tags.join(', ')}\n`;
         }
-        
+
         resultText += '\n';
       });
 
@@ -1045,7 +1046,7 @@ server.tool(
 
       // 캐시에 저장 (2분 TTL)
       caches.search.set(cacheKey, resultText, 120000);
-      
+
       log.info('Search completed', {
         query: sanitizedQuery,
         resultCount: results.length,
@@ -1079,7 +1080,7 @@ server.tool(
       enforcePolicy('tag');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1104,7 +1105,7 @@ server.tool(
 
       // 메타데이터 저장
       await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), "utf-8");
-      
+
       // 캐시 무효화
       invalidateCaches({ filename });
 
@@ -1128,7 +1129,7 @@ server.tool(
       enforcePolicy('categorize');
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1151,7 +1152,7 @@ server.tool(
 
       // 메타데이터 저장
       await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), "utf-8");
-      
+
       // 캐시 무효화
       invalidateCaches({ filename });
 
@@ -1178,7 +1179,7 @@ server.tool(
       for (const filename of promptFiles) {
         const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
         let promptCategory = "uncategorized";
-        
+
         try {
           const metaContent = await fs.readFile(metaPath, "utf-8");
           const metadata = JSON.parse(metaContent);
@@ -1197,7 +1198,7 @@ server.tool(
       if (category) {
         const targetCategory = category.toLowerCase();
         const categoryPrompts = categorizedPrompts[targetCategory] || [];
-        
+
         if (categoryPrompts.length === 0) {
           return createSuccessResponse(`No prompts found in category "${category}"`);
         }
@@ -1236,17 +1237,17 @@ server.tool(
     try {
       // Rate limiting 적용
       checkRateLimit('process-template');
-      
+
       // 입력 검증
       const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
       const filenameRisk = inputSanitizer.assessRisk(sanitizedFilename);
-      
+
       if (filenameRisk.level === 'high') {
         throw new ValidationError('위험한 파일명이 감지되었습니다', 'filename');
       }
-      
+
       const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1256,7 +1257,7 @@ server.tool(
 
       // 템플릿 내용 읽기
       const templateContent = await fs.readFile(filePath, "utf-8");
-      
+
       // 템플릿 유효성 검사
       const validation = templateEngine.validate(templateContent);
       if (!validation.isValid) {
@@ -1264,32 +1265,32 @@ server.tool(
           `Template validation failed: ${validation.errors.join(', ')}`
         );
       }
-      
+
       // 변수 정제 및 위험도 평가
       const sanitizedVariables = inputSanitizer.sanitizeObject(variables, {
         maxDepth: 5,
         maxKeys: 50,
         maxStringLength: 10000
       });
-      
+
       // 템플릿 렌더링 (고급 기능 사용)
       const processedContent = templateEngine.render(templateContent, sanitizedVariables, {
         maxIterations: 100,
         sanitizeOutput: true,
         logExecution: true
       });
-      
+
       // 사용된 변수들 추출
       const requiredVariables = templateEngine.extractVariables(templateContent);
       const providedVariables = Object.keys(variables);
       const missingVariables = requiredVariables.filter(v => !providedVariables.includes(v));
-      
+
       let result = `Processed template "${sanitizedFilename}":\n\n${processedContent}`;
-      
+
       if (missingVariables.length > 0) {
         result += `\n\n⚠️ Missing variables: ${missingVariables.join(", ")}`;
       }
-      
+
       // 템플릿 처리 통계
       result += `\n\n📊 Template Stats:`;
       result += `\n- Required variables: ${requiredVariables.length}`;
@@ -1314,7 +1315,7 @@ server.tool(
   async ({ filename }) => {
     try {
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1324,10 +1325,10 @@ server.tool(
 
       // 템플릿 내용 읽기
       const templateContent = await fs.readFile(filePath, "utf-8");
-      
+
       // 변수 패턴 찾기 {{variable}}
       const variableMatches = templateContent.match(/\{\{\s*([^}]+)\s*\}\}/g) || [];
-      
+
       if (variableMatches.length === 0) {
         return createSuccessResponse(`No template variables found in "${filename}"`);
       }
@@ -1338,7 +1339,7 @@ server.tool(
       }))].sort();
 
       const variablesList = variables.map(v => `- {{${v}}}`).join("\n");
-      
+
       return createSuccessResponse(`Template variables in "${filename}":\n\n${variablesList}`);
     } catch (error) {
       return createErrorResponse(`Failed to analyze template ${filename}: ${error.message}`, error);
@@ -1358,7 +1359,7 @@ server.tool(
     try {
       const filePath = path.join(PROMPTS_DIR, filename);
       const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1383,7 +1384,7 @@ server.tool(
         metadata.favorite = false;
         delete metadata.favoriteDate;
       }
-      
+
       metadata.lastModified = new Date().toISOString();
 
       // 메타데이터 저장
@@ -1410,15 +1411,15 @@ server.tool(
 
       for (const filename of promptFiles) {
         const metaPath = path.join(PROMPTS_DIR, `.${filename}.meta`);
-        
+
         try {
           const metaContent = await fs.readFile(metaPath, "utf-8");
           const metadata = JSON.parse(metaContent);
-          
+
           if (metadata.favorite) {
             const filePath = path.join(PROMPTS_DIR, filename);
             const stats = await fs.stat(filePath);
-            
+
             favoritePrompts.push({
               name: filename,
               size: formatFileSize(stats.size),
@@ -1445,7 +1446,7 @@ server.tool(
       });
 
       let result = `Favorite prompts (${favoritePrompts.length}):\n\n`;
-      
+
       favoritePrompts.forEach((prompt, index) => {
         result += `${index + 1}. **${prompt.name}** (${prompt.size})\n`;
         result += `   Category: ${prompt.category}\n`;
@@ -1473,7 +1474,7 @@ server.tool(
   async ({ filename }) => {
     try {
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1482,13 +1483,13 @@ server.tool(
       }
 
       const versions = await versionManager.getAllVersions(filename);
-      
+
       if (versions.length === 0) {
         return createSuccessResponse(`No version history found for "${filename}". This prompt may have been created before version tracking was enabled.`);
       }
 
       let result = `Version history for "${filename}" (${versions.length} versions):\n\n`;
-      
+
       versions.forEach((version, index) => {
         result += `Version ${version.version} (${version.action})\n`;
         result += `  Date: ${formatDate(new Date(version.timestamp))}\n`;
@@ -1516,7 +1517,7 @@ server.tool(
   async ({ filename, fromVersion, toVersion }) => {
     try {
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1525,7 +1526,7 @@ server.tool(
       }
 
       const comparison = await versionManager.compareVersionsDetailed(filename, fromVersion, toVersion);
-      
+
       let result = `Comparison: ${filename} v${fromVersion} → v${toVersion}\n\n`;
       result += `Summary:\n`;
       result += `  Lines added: ${comparison.summary.linesAdded}\n`;
@@ -1557,7 +1558,7 @@ server.tool(
     try {
       enforcePolicy('rollback');
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1566,7 +1567,7 @@ server.tool(
       }
 
       const rollbackResult = await versionManager.rollbackToVersion(filename, version);
-      
+
       let result = `Successfully rolled back "${filename}" to version ${rollbackResult.rolledBackTo}\n`;
       result += `New version: ${rollbackResult.newVersion}\n\n`;
       result += `Content preview (first 200 characters):\n`;
@@ -1593,7 +1594,7 @@ server.tool(
   async ({ filename, version }) => {
     try {
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1602,7 +1603,7 @@ server.tool(
       }
 
       const versionData = await versionManager.getVersion(filename, version);
-      
+
       if (!versionData) {
         return createErrorResponse(`Version ${version} not found for prompt "${filename}".`);
       }
@@ -1631,7 +1632,7 @@ server.tool(
   async ({ filename }) => {
     try {
       const filePath = path.join(PROMPTS_DIR, filename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1640,7 +1641,7 @@ server.tool(
       }
 
       const stats = await versionManager.getVersionStats(filename);
-      
+
       if (stats.totalVersions === 0) {
         return createSuccessResponse(`No version history found for "${filename}".`);
       }
@@ -1649,17 +1650,17 @@ server.tool(
       result += `Total versions: ${stats.totalVersions}\n`;
       result += `First version: ${formatDate(new Date(stats.firstVersion.timestamp))} (${stats.firstVersion.action})\n`;
       result += `Latest version: ${formatDate(new Date(stats.lastVersion.timestamp))} (${stats.lastVersion.action})\n\n`;
-      
+
       result += `Actions breakdown:\n`;
       Object.entries(stats.actions).forEach(([action, count]) => {
         result += `  ${action}: ${count}\n`;
       });
-      
+
       result += `\nSize history:\n`;
       stats.totalSizeHistory.slice(-5).forEach((entry) => {
         result += `  v${entry.version}: ${formatFileSize(entry.size)} (${formatDate(new Date(entry.timestamp))})\n`;
       });
-      
+
       if (stats.totalSizeHistory.length > 5) {
         result += `  ... and ${stats.totalSizeHistory.length - 5} more versions`;
       }
@@ -1679,15 +1680,15 @@ server.tool(
   async () => {
     try {
       checkRateLimit('list-template-categories');
-      
+
       const categories = templateLibrary.getCategories();
-      
+
       if (categories.length === 0) {
         return createSuccessResponse('템플릿 카테고리가 없습니다.');
       }
 
       let result = `📚 템플릿 라이브러리 카테고리 (${categories.length}개)\n\n`;
-      
+
       categories.forEach((category, index) => {
         result += `${index + 1}. **${category.name}** (${category.templateCount}개 템플릿)\n`;
         result += `   ${category.description}\n`;
@@ -1699,9 +1700,9 @@ server.tool(
       result += `- 총 템플릿: ${stats.totalTemplates}개\n`;
       result += `- 총 카테고리: ${stats.totalCategories}개\n`;
       result += `- 총 태그: ${stats.totalTags}개\n\n`;
-      
+
       result += `🏷️ 인기 태그:\n`;
-      stats.mostCommonTags.slice(0, 5).forEach(({tag, count}) => {
+      stats.mostCommonTags.slice(0, 5).forEach(({ tag, count }) => {
         result += `- ${tag} (${count}개)\n`;
       });
 
@@ -1722,28 +1723,28 @@ server.tool(
   async ({ category }) => {
     try {
       checkRateLimit('list-templates-by-category');
-      
+
       const templates = templateLibrary.getTemplatesByCategory(category);
-      
+
       if (templates.length === 0) {
         return createSuccessResponse(`카테고리 "${category}"에 템플릿이 없습니다.`);
       }
 
       let result = `📁 카테고리: ${category} (${templates.length}개 템플릿)\n\n`;
-      
+
       templates.forEach((template, index) => {
         result += `${index + 1}. **${template.name}**\n`;
         result += `   ${template.description}\n`;
         result += `   ID: \`${template.id}\`\n`;
-        
+
         if (template.tags.length > 0) {
           result += `   태그: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n`;
         }
-        
+
         if (template.variables.length > 0) {
           result += `   필요 변수: ${template.variables.map(v => `\`${v}\``).join(', ')}\n`;
         }
-        
+
         result += '\n';
       });
 
@@ -1764,19 +1765,19 @@ server.tool(
   async ({ templateId }) => {
     try {
       checkRateLimit('get-template-details');
-      
+
       const template = templateLibrary.getTemplate(templateId);
-      
+
       let result = `📋 템플릿 상세 정보\n\n`;
       result += `**이름**: ${template.name}\n`;
       result += `**ID**: ${template.id}\n`;
       result += `**카테고리**: ${template.categoryName}\n`;
       result += `**설명**: ${template.description}\n\n`;
-      
+
       if (template.tags.length > 0) {
         result += `**태그**: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n\n`;
       }
-      
+
       if (template.variables.length > 0) {
         result += `**필요 변수** (${template.variables.length}개):\n`;
         template.variables.forEach(variable => {
@@ -1784,12 +1785,12 @@ server.tool(
         });
         result += '\n';
       }
-      
+
       result += `**템플릿 내용**:\n`;
       result += '```\n';
       result += template.template;
       result += '\n```\n\n';
-      
+
       // 관련 템플릿 추천
       const relatedTemplates = templateLibrary.getRelatedTemplates(templateId, 3);
       if (relatedTemplates.length > 0) {
@@ -1819,32 +1820,32 @@ server.tool(
   async ({ query, category, tags = [], limit = 10 }) => {
     try {
       checkRateLimit('search-templates');
-      
+
       const results = templateLibrary.searchTemplates(query, {
         category,
         tags,
         limit
       });
-      
+
       if (results.length === 0) {
         return createSuccessResponse(`"${query}"에 대한 템플릿을 찾을 수 없습니다.`);
       }
 
       let result = `🔍 템플릿 검색 결과: "${query}" (${results.length}개 발견)\n\n`;
-      
+
       results.forEach((template, index) => {
         result += `${index + 1}. **${template.name}**\n`;
         result += `   ${template.description}\n`;
         result += `   ID: \`${template.id}\` | 카테고리: ${template.categoryName}\n`;
-        
+
         if (template.tags.length > 0) {
           result += `   태그: ${template.tags.map(tag => `\`${tag}\``).join(', ')}\n`;
         }
-        
+
         if (template.score) {
           result += `   매치 점수: ${(template.score * 100).toFixed(0)}%\n`;
         }
-        
+
         result += '\n';
       });
 
@@ -1866,24 +1867,24 @@ server.tool(
   async ({ templateId, variables }) => {
     try {
       checkRateLimit('render-template');
-      
+
       const result = templateLibrary.renderTemplate(templateId, variables);
-      
+
       let response = `✅ 템플릿 렌더링 완료: **${result.templateName}**\n\n`;
-      
+
       response += `**렌더링 결과**:\n`;
       response += '---\n';
       response += result.renderedContent;
       response += '\n---\n\n';
-      
+
       response += `📊 **렌더링 정보**:\n`;
       response += `- 사용된 변수: ${result.usedVariables.length}개 (${result.usedVariables.join(', ')})\n`;
       response += `- 필요한 변수: ${result.requiredVariables.length}개\n`;
-      
+
       if (result.missingVariables.length > 0) {
         response += `- ⚠️ 누락된 변수: ${result.missingVariables.join(', ')}\n`;
       }
-      
+
       response += `- 출력 길이: ${result.renderedContent.length}자\n`;
 
       return createSuccessResponse(response);
@@ -1903,15 +1904,15 @@ server.tool(
   async ({ limit = 5 }) => {
     try {
       checkRateLimit('get-popular-templates');
-      
+
       const popularTemplates = templateLibrary.getPopularTemplates(limit);
-      
+
       if (popularTemplates.length === 0) {
         return createSuccessResponse('인기 템플릿이 없습니다.');
       }
 
       let result = `🌟 인기 템플릿 TOP ${popularTemplates.length}\n\n`;
-      
+
       popularTemplates.forEach((template, index) => {
         result += `${index + 1}. **${template.name}**\n`;
         result += `   ${template.description}\n`;
@@ -1940,17 +1941,17 @@ server.tool(
     try {
       checkRateLimit('create-prompt-from-template');
       enforcePolicy('create_from_template');
-      
+
       // 템플릿 렌더링
       const renderResult = templateLibrary.renderTemplate(templateId, variables);
       const template = templateLibrary.getTemplate(templateId);
-      
+
       // 파일명 정제
       const sanitizedFilename = inputSanitizer.sanitizeFilename(filename);
-      
+
       // 파일 경로 설정
       const filePath = path.join(PROMPTS_DIR, sanitizedFilename);
-      
+
       // 파일 존재 여부 확인
       try {
         await fs.access(filePath);
@@ -1958,10 +1959,10 @@ server.tool(
       } catch (e) {
         // 파일이 없으면 계속 진행
       }
-      
+
       // 프롬프트 내용 생성
       let promptContent = renderResult.renderedContent;
-      
+
       // 템플릿 정보를 주석으로 추가 (선택사항)
       if (addMetadata) {
         const metadataComment = `<!-- 
@@ -1973,13 +1974,13 @@ server.tool(
 `;
         promptContent = metadataComment + promptContent;
       }
-      
+
       // 파일 생성
       await fs.writeFile(filePath, promptContent, "utf-8");
-      
+
       // 버전 히스토리에 저장
       const version = await versionManager.saveVersion(sanitizedFilename, promptContent, "create_from_template");
-      
+
       // 메타데이터 생성
       if (addMetadata) {
         const metaPath = path.join(PROMPTS_DIR, `.${sanitizedFilename}.meta`);
@@ -1993,24 +1994,24 @@ server.tool(
           usedVariables: Object.keys(variables),
           lastModified: new Date().toISOString()
         };
-        
+
         await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), "utf-8");
       }
-      
+
       // 캐시 무효화
       invalidateCaches({ filename: sanitizedFilename });
-      
+
       let result = `✅ 템플릿으로부터 프롬프트 생성 완료!\n\n`;
       result += `**파일명**: ${sanitizedFilename}\n`;
       result += `**템플릿**: ${template.name} (\`${templateId}\`)\n`;
       result += `**버전**: ${version.version}\n`;
       result += `**크기**: ${formatFileSize(promptContent.length)}\n\n`;
-      
+
       if (renderResult.missingVariables.length > 0) {
         result += `⚠️ **누락된 변수**: ${renderResult.missingVariables.join(', ')}\n`;
         result += `이 변수들은 템플릿에서 빈 값으로 처리되었습니다.\n\n`;
       }
-      
+
       result += `**내용 미리보기** (처음 200자):\n`;
       result += '```\n';
       result += promptContent.substring(0, 200);
@@ -2047,10 +2048,10 @@ server.tool(
     try {
       checkRateLimit('export-prompts');
       enforcePolicy('export');
-      
-      log.info('Starting prompt export', { 
-        format, 
-        includeMetadata, 
+
+      log.info('Starting prompt export', {
+        format,
+        includeMetadata,
         includeVersionHistory,
         filterByTags,
         filterByCategory
@@ -2073,20 +2074,20 @@ server.tool(
         result += `**내보낸 프롬프트**: ${exportResult.summary.exportedPrompts}개\n`;
         result += `**생성 시간**: ${new Date(exportResult.summary.timestamp).toLocaleString('ko-KR')}\n`;
         result += `**데이터 크기**: ${formatFileSize(JSON.stringify(exportResult.data).length)}\n\n`;
-        
+
         if (filterByTags.length > 0) {
           result += `**태그 필터**: ${filterByTags.join(', ')}\n`;
         }
-        
+
         if (filterByCategory) {
           result += `**카테고리 필터**: ${filterByCategory}\n`;
         }
-        
+
         result += `**포함 항목**:\n`;
         result += `- 프롬프트 내용: ✅\n`;
         result += `- 메타데이터: ${includeMetadata ? '✅' : '❌'}\n`;
         result += `- 버전 히스토리: ${includeVersionHistory ? '✅' : '❌'}\n\n`;
-        
+
         result += `**내보내기 데이터 샘플**:\n`;
         result += '```json\n';
         result += JSON.stringify({
@@ -2141,8 +2142,8 @@ server.tool(
     try {
       checkRateLimit('import-prompts');
       enforcePolicy('import');
-      
-      log.info('Starting prompt import', { 
+
+      log.info('Starting prompt import', {
         promptCount: importData.prompts?.length || 0,
         overwriteExisting,
         skipDuplicates,
@@ -2169,14 +2170,14 @@ server.tool(
         result += `**덮어쓴 프롬프트**: ${importResult.overwritten}개\n`;
         result += `**건너뛴 프롬프트**: ${importResult.skipped}개\n`;
         result += `**오류 발생**: ${importResult.errors.length}개\n\n`;
-        
+
         if (importResult.backupInfo) {
           result += `**백업 정보**:\n`;
           result += `- 백업 위치: ${path.basename(importResult.backupInfo.backupDir)}\n`;
           result += `- 백업된 파일: ${importResult.backupInfo.fileCount}개\n`;
           result += `- 백업 시간: ${new Date(importResult.backupInfo.timestamp).toLocaleString('ko-KR')}\n\n`;
         }
-        
+
         if (importResult.errors.length > 0) {
           result += `**오류 상세**:\n`;
           importResult.errors.slice(0, 5).forEach(error => {
@@ -2187,7 +2188,7 @@ server.tool(
           }
           result += '\n';
         }
-        
+
         result += `**처리된 파일 상세**:\n`;
         importResult.processedFiles.slice(0, 10).forEach(file => {
           const actionText = {
@@ -2195,10 +2196,10 @@ server.tool(
             'overwritten': '🔄 덮어씀',
             'skipped': '⏭️ 건너뜀'
           }[file.action] || file.action;
-          
+
           result += `- ${file.filename}: ${actionText}\n`;
         });
-        
+
         if (importResult.processedFiles.length > 10) {
           result += `- ... 외 ${importResult.processedFiles.length - 10}개 파일\n`;
         }
@@ -2223,7 +2224,7 @@ server.tool(
   async () => {
     try {
       checkRateLimit('get-import-export-status');
-      
+
       const status = await importExportManager.getImportExportStatus();
       const policy = {
         readOnly: envBool('READ_ONLY', false),
@@ -2231,28 +2232,28 @@ server.tool(
         disableExport: envBool('DISABLE_EXPORT', false),
         disableVersionRollback: envBool('DISABLE_VERSION_ROLLBACK', false)
       };
-      
+
       let result = `📊 가져오기/내보내기 시스템 상태\n\n`;
       result += `**현재 프롬프트**: ${status.totalPrompts}개\n`;
       result += `**메타데이터 지원**: ${status.hasMetadata ? '✅' : '❌'}\n`;
       result += `**백업 개수**: ${status.backupCount}개\n`;
       result += `**최대 파일 크기**: ${status.maxFileSize}\n\n`;
-      
+
       result += `**정책 상태**:\n`;
       result += `- 읽기 전용(READ_ONLY): ${policy.readOnly ? 'ON' : 'OFF'}\n`;
       result += `- 임포트 금지(DISABLE_IMPORT): ${policy.disableImport ? 'ON' : 'OFF'}\n`;
       result += `- 익스포트 금지(DISABLE_EXPORT): ${policy.disableExport ? 'ON' : 'OFF'}\n`;
       result += `- 롤백 금지(DISABLE_VERSION_ROLLBACK): ${policy.disableVersionRollback ? 'ON' : 'OFF'}\n\n`;
-      
+
       if (status.lastBackup) {
         result += `**최근 백업**:\n`;
         result += `- 이름: ${status.lastBackup.name}\n`;
         result += `- 생성 시간: ${new Date(status.lastBackup.created).toLocaleString('ko-KR')}\n`;
         result += `- 파일 수: ${status.lastBackup.fileCount}개\n\n`;
       }
-      
+
       result += `**지원 형식**: ${status.supportedFormats.join(', ')}\n\n`;
-      
+
       result += `**기능 지원**:\n`;
       Object.entries(status.features).forEach(([feature, supported]) => {
         const featureNames = {
@@ -2263,7 +2264,7 @@ server.tool(
           metadata: '메타데이터',
           versionHistory: '버전 히스토리'
         };
-        
+
         result += `- ${featureNames[feature] || feature}: ${supported ? '✅' : '❌'}\n`;
       });
 
@@ -2362,7 +2363,7 @@ server.tool(
 function toMcpErrorResponse(error) {
   const errorResponse = createErrorResponse(error, process.env.NODE_ENV === 'development');
   globalErrorTracker.track(error);
-  
+
   // 구조화된 로깅
   log.error('MCP operation failed', {
     errorName: error.name,
@@ -2372,7 +2373,7 @@ function toMcpErrorResponse(error) {
     field: error.field,
     context: error.context
   });
-  
+
   return {
     content: [
       {
@@ -2386,7 +2387,7 @@ function toMcpErrorResponse(error) {
 function toMcpSuccessResponse(data, message) {
   const successResponse = createSuccessResponse(data, message);
   const text = message || (typeof data === 'string' ? data : JSON.stringify(data, null, 2));
-  
+
   return {
     content: [
       {
@@ -2400,11 +2401,11 @@ function toMcpSuccessResponse(data, message) {
 // 유틸리티 함수: 파일 크기 포맷팅
 function formatFileSize(bytes) {
   if (bytes === 0) return "0 Bytes";
-  
+
   const k = 1024;
   const sizes = ["Bytes", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
+
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
@@ -2424,15 +2425,15 @@ async function main() {
     });
 
     await ensurePromptsDir();
-    
+
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    
+
     log.info('MCP Server connected successfully', {
       transport: 'stdio',
       capabilities: Object.keys(server.capabilities || {})
     });
-    
+
     console.error("Prompt Manager MCP Server running on stdio");
   } catch (error) {
     log.error('Fatal error during server startup', {
@@ -2449,13 +2450,13 @@ async function gracefulShutdown(signal) {
   try {
     log.info(`Received ${signal}, shutting down gracefully`);
     // 리미터/캐시 정리
-    try { rateLimiters.standard.destroy(); } catch {}
-    try { rateLimiters.strict.destroy(); } catch {}
-    try { rateLimiters.upload.destroy(); } catch {}
-    try { caches.files.destroy(); } catch {}
-    try { caches.metadata.destroy(); } catch {}
-    try { caches.search.destroy(); } catch {}
-    try { caches.templates.destroy(); } catch {}
+    try { rateLimiters.standard.destroy(); } catch { }
+    try { rateLimiters.strict.destroy(); } catch { }
+    try { rateLimiters.upload.destroy(); } catch { }
+    try { caches.files.destroy(); } catch { }
+    try { caches.metadata.destroy(); } catch { }
+    try { caches.search.destroy(); } catch { }
+    try { caches.templates.destroy(); } catch { }
     const stats = globalErrorTracker.getStats();
     log.info('Server shutdown stats', stats);
   } finally {
